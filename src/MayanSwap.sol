@@ -5,17 +5,17 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import "../interfaces/IBridge.sol";
-import "../interfaces/IWormhole.sol";
+import "./interfaces/IBridge.sol";
+import "./interfaces/IWormhole.sol";
 import "./MayanStructs.sol";
 
 contract MayanSwap {
     using SafeERC20 for IERC20;
 
-    uint16 constant recipientChain = 1;
-
     IBridge tokenBridge;
-    address governor;
+    address guardian;
+    address nextGuardian;
+    bool paused;
 
     struct RelayerFees {
         uint64 swapFee;
@@ -31,28 +31,25 @@ contract MayanSwap {
     }
 
     struct Recepient {
-	    bytes32 mayan;
+	    bytes32 mayanAddr;
+        uint16 mayanChain;
 	    bytes32 destAddr;
 	    uint16 destChainId;
     }
 
     constructor(address _tokenBridge) {
         tokenBridge = IBridge(_tokenBridge);
-        governor = msg.sender;
-    }
-
-    function setTokenBridge(address _tokenBridge) public {
-        require(msg.sender == governor, 'only governor');
-        tokenBridge = IBridge(_tokenBridge);
+        guardian = msg.sender;
     }
 
     function swap(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChain, Criteria memory criteria, address tokenIn, uint256 amountIn) public payable returns (uint64 sequence) {
+        require(paused == false, 'contract is paused');
         require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
     
         uint256 amountBefore = IERC20(tokenIn).balanceOf(address(this));
         IERC20(tokenIn).safeIncreaseAllowance(address(tokenBridge), amountIn);
-        uint64 seq1 = tokenBridge.transferTokens{ value: msg.value/2 }(tokenIn, amountIn, recipientChain, recepient.mayan, 0, criteria.nonce);
+        uint64 seq1 = tokenBridge.transferTokens{ value: msg.value/2 }(tokenIn, amountIn, recepient.mayanChain, recepient.mayanAddr, 0, criteria.nonce);
         amountIn = amountBefore - IERC20(tokenIn).balanceOf(address(this));
 
         uint256 normalizedAmount = normalizeAmount(amountIn, decimalsOf(tokenIn));
@@ -82,16 +79,17 @@ contract MayanSwap {
 
         sequence = tokenBridge.wormhole().publishMessage{
             value : msg.value/2
-        }(++criteria.nonce, encoded, tokenBridge.finality());
+        }(criteria.nonce, encoded, tokenBridge.finality());
     }
 
     function wrapAndSwapETH(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChain, Criteria memory criteria) public payable returns (uint64 sequence) {
+        require(paused == false, 'contract is paused');
         require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
         uint wormholeFee = tokenBridge.wormhole().messageFee();
         address WETH = address(tokenBridge.WETH());
 
         uint256 amount = IERC20(WETH).balanceOf(address(tokenBridge));
-        uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: msg.value - wormholeFee }(recipientChain, recepient.mayan, 0, criteria.nonce);
+        uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: msg.value - wormholeFee }(recepient.mayanChain, recepient.mayanAddr, 0, criteria.nonce);
         amount = IERC20(WETH).balanceOf(address(tokenBridge)) - amount;
 
         uint256 normalizedAmount = normalizeAmount(amount, 18);
@@ -121,7 +119,7 @@ contract MayanSwap {
 
         sequence = tokenBridge.wormhole().publishMessage{
             value : wormholeFee
-        }(++criteria.nonce, encoded, tokenBridge.finality());
+        }(criteria.nonce, encoded, tokenBridge.finality());
     }
 
     function decimalsOf(address token) internal view returns(uint8) {
@@ -160,5 +158,25 @@ contract MayanSwap {
             s.redeemFee,
             s.refundFee
         );
+    }
+
+    function pause() public {
+        require(msg.sender == guardian, 'only guardian');
+        paused = true;
+    }
+
+    function unpause() public {
+        require(msg.sender == guardian, 'only guardian');
+        paused = false;
+    }
+
+    function changeGuardian(address newGuardian) public {
+        require(msg.sender == guardian, 'only guardian');
+        nextGuardian = newGuardian;
+    }
+
+    function claimGuardian() public {
+        require(msg.sender == nextGuardian, 'only next guardian');
+        guardian = nextGuardian;
     }
 }

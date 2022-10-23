@@ -21,17 +21,17 @@ contract MayanStructs {
         bytes32 from;
         // ChainId of sender (for revert scenario)
         uint16 fromChain;
-
+        // Sequence of transfer vaa
         uint64 sequence;
-
+        // Minimum amount our
         uint256 amountOutMin;
+        // deadline of swap
         uint64 deadline;
-
-        // Swap fee
+        // Swap relayer fee
         uint64 swapFee;
-        // Redeem fee
+        // Redeem relayer fee
         uint64 redeemFee;
-        // Refund fee
+        // Refund relayer fee
         uint64 refundFee;
     }
 }
