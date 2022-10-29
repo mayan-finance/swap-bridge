@@ -160,14 +160,13 @@ contract MayanSwap {
 		);
 	}
 
-	function pause() public {
+	function setPause(bool _pause) public {
 		require(msg.sender == guardian, 'only guardian');
-		paused = true;
+		paused = _pause;
 	}
 
-	function unpause() public {
-		require(msg.sender == guardian, 'only guardian');
-		paused = false;
+	function isPaused() public view {
+		return paused;
 	}
 
 	function changeGuardian(address newGuardian) public {
