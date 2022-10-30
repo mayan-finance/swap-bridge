@@ -127,21 +127,21 @@ contract MayanSwap {
 		return abi.decode(queriedDecimals, (uint8));
 	}
 
-	function normalizeAmount(uint256 amount, uint8 decimals) internal pure returns(uint256){
+	function normalizeAmount(uint256 amount, uint8 decimals) internal pure returns(uint256) {
 		if (decimals > 8) {
 			amount /= 10 ** (decimals - 8);
 		}
 		return amount;
 	}
 
-	function deNormalizeAmount(uint256 amount, uint8 decimals) internal pure returns(uint256){
+	function deNormalizeAmount(uint256 amount, uint8 decimals) internal pure returns(uint256) {
 		if (decimals > 8) {
 			amount *= 10 ** (decimals - 8);
 		}
 		return amount;
 	}
 
-	function encodeSwap(MayanStructs.Swap memory s) public pure returns (bytes memory encoded) {
+	function encodeSwap(MayanStructs.Swap memory s) public pure returns(bytes memory encoded) {
 		encoded = abi.encodePacked(
 			s.payloadID,
 			s.amountIn,
@@ -165,7 +165,7 @@ contract MayanSwap {
 		paused = _pause;
 	}
 
-	function isPaused() public view {
+	function isPaused() public view returns(bool) {
 		return paused;
 	}
 
