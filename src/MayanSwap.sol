@@ -19,7 +19,6 @@ contract MayanSwap {
 	bool paused;
 
 	struct RelayerFees {
-		uint64 transferFee;
 		uint64 swapFee;
 		uint64 redeemFee;
 		uint64 refundFee;
@@ -97,7 +96,7 @@ contract MayanSwap {
 
 		uint256 amountIn = deNormalizeAmount(normalizedAmount, 18);
 
-		uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: amountIn + wormholeFee }(recepient.mayanChain, recepient.mayanAddr, relayerFees.transferFee, criteria.nonce);
+		uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: amountIn + wormholeFee }(recepient.mayanChain, recepient.mayanAddr, 0, criteria.nonce);
 
 		uint dust = msg.value - 2*wormholeFee - amountIn;
 		if (dust > 0) {
@@ -181,5 +180,16 @@ contract MayanSwap {
 	function claimGuardian() public {
 		require(msg.sender == nextGuardian, 'only next guardian');
 		guardian = nextGuardian;
+	}
+
+	function sweepToken(address token, uint256 amount, address to) public {
+		require(msg.sender == guardian, 'only guardian');
+		IERC20(token).safeTransfer(to, amount);
+	}
+
+	function sweepEth(uint256 amount, address payable to) public {
+		require(msg.sender == guardian, 'only guardian');
+		require(to != address(0), 'transfer to the zero address');
+		to.transfer(amount);
 	}
 }

@@ -21,7 +21,7 @@ contract MayanStructs {
 		// Sequence of transfer vaa
 		uint64 sequence;
 		// Minimum amount our
-		uint256 amountOutMin;
+		uint64 amountOutMin;
 		// deadline of swap
 		uint64 deadline;
 		// Swap relayer fee
