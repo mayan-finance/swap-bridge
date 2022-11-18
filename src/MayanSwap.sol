@@ -27,13 +27,13 @@ contract MayanSwap {
 	struct Criteria {
 		uint256 transferDeadline;
 		uint64 swapDeadline;
-		uint256 amountOutMin;
+		uint64 amountOutMin;
 		uint32 nonce;
 	}
 
 	struct Recepient {
 		bytes32 mayanAddr;
-		uint16 mayanChain;
+		uint16 mayanChainId;
 		bytes32 destAddr;
 		uint16 destChainId;
 	}
@@ -46,22 +46,22 @@ contract MayanSwap {
 	function swap(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChain, Criteria memory criteria, address tokenIn, uint256 amountIn) public payable returns (uint64 sequence) {
 		require(paused == false, 'contract is paused');
 		require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
-		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-	
-		uint256 amountBefore = IERC20(tokenIn).balanceOf(address(this));
-		IERC20(tokenIn).safeIncreaseAllowance(address(tokenBridge), amountIn);
-		uint64 seq1 = tokenBridge.transferTokens{ value: msg.value/2 }(tokenIn, amountIn, recepient.mayanChain, recepient.mayanAddr, 0, criteria.nonce);
-		amountIn = amountBefore - IERC20(tokenIn).balanceOf(address(this));
 
-		uint256 normalizedAmount = normalizeAmount(amountIn, decimalsOf(tokenIn));
+		uint8 decimals = decimalsOf(tokenIn);
+		uint256 normalizedAmount = normalizeAmount(amountIn, decimals);
 
 		require(relayerFees.swapFee < normalizedAmount, 'swap fee exceeds amount');
 		require(relayerFees.redeemFee < criteria.amountOutMin, 'redeem fee exceeds min output');
 		require(relayerFees.refundFee < normalizedAmount, 'refund fee exceeds amount');
 
+		amountIn = deNormalizeAmount(normalizedAmount, decimals);
+
+		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+		IERC20(tokenIn).safeIncreaseAllowance(address(tokenBridge), amountIn);
+		uint64 seq1 = tokenBridge.transferTokens{ value: msg.value/2 }(tokenIn, amountIn, recepient.mayanChainId, recepient.mayanAddr, 0, criteria.nonce);
+
 		MayanStructs.Swap memory swapStruct = MayanStructs.Swap({
 			payloadID: 1,
-			amountIn: normalizedAmount,
 			tokenAddress: tokenOutAddr,
 			tokenChain: tokenOutChain,
 			to: recepient.destAddr,
@@ -87,21 +87,24 @@ contract MayanSwap {
 		require(paused == false, 'contract is paused');
 		require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
 		uint wormholeFee = tokenBridge.wormhole().messageFee();
-		address WETH = address(tokenBridge.WETH());
 
-		uint256 amount = IERC20(WETH).balanceOf(address(tokenBridge));
-		uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: msg.value - wormholeFee }(recepient.mayanChain, recepient.mayanAddr, 0, criteria.nonce);
-		amount = IERC20(WETH).balanceOf(address(tokenBridge)) - amount;
-
-		uint256 normalizedAmount = normalizeAmount(amount, 18);
+		uint256 normalizedAmount = normalizeAmount(msg.value - 2*wormholeFee, 18);
 		
 		require(relayerFees.swapFee < normalizedAmount, 'swap fee exceeds amount');
 		require(relayerFees.redeemFee < criteria.amountOutMin, 'redeem fee exceeds min output');
 		require(relayerFees.refundFee < normalizedAmount, 'refund fee exceeds amount');
 
+		uint256 amountIn = deNormalizeAmount(normalizedAmount, 18);
+
+		uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: amountIn + wormholeFee }(recepient.mayanChainId, recepient.mayanAddr, 0, criteria.nonce);
+
+		uint dust = msg.value - 2*wormholeFee - amountIn;
+		if (dust > 0) {
+			payable(msg.sender).transfer(dust);
+		}
+
 		MayanStructs.Swap memory swapStruct = MayanStructs.Swap({
 			payloadID: 1,
-			amountIn: normalizedAmount,
 			tokenAddress: tokenOutAddr,
 			tokenChain: tokenOutChain,
 			to: recepient.destAddr,
@@ -145,7 +148,6 @@ contract MayanSwap {
 	function encodeSwap(MayanStructs.Swap memory s) public pure returns(bytes memory encoded) {
 		encoded = abi.encodePacked(
 			s.payloadID,
-			s.amountIn,
 			s.tokenAddress,
 			s.tokenChain,
 			s.to,
@@ -178,5 +180,16 @@ contract MayanSwap {
 	function claimGuardian() public {
 		require(msg.sender == nextGuardian, 'only next guardian');
 		guardian = nextGuardian;
+	}
+
+	function sweepToken(address token, uint256 amount, address to) public {
+		require(msg.sender == guardian, 'only guardian');
+		IERC20(token).safeTransfer(to, amount);
+	}
+
+	function sweepEth(uint256 amount, address payable to) public {
+		require(msg.sender == guardian, 'only guardian');
+		require(to != address(0), 'transfer to the zero address');
+		to.transfer(amount);
 	}
 }
