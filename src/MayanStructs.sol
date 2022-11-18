@@ -6,8 +6,6 @@ contract MayanStructs {
 	struct Swap {
 		// PayloadID uint8 = 1
 		uint8 payloadID;
-		// Amount being transferred (big-endian uint256)
-		uint256 amountIn;
 		// Address of the ouput token. Left-zero-padded if shorter than 32 bytes
 		bytes32 tokenAddress;
 		// Chain ID of the ouput token
