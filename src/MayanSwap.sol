@@ -33,7 +33,7 @@ contract MayanSwap {
 
 	struct Recepient {
 		bytes32 mayanAddr;
-		uint16 mayanChain;
+		uint16 mayanChainId;
 		bytes32 destAddr;
 		uint16 destChainId;
 	}
@@ -58,7 +58,7 @@ contract MayanSwap {
 
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 		IERC20(tokenIn).safeIncreaseAllowance(address(tokenBridge), amountIn);
-		uint64 seq1 = tokenBridge.transferTokens{ value: msg.value/2 }(tokenIn, amountIn, recepient.mayanChain, recepient.mayanAddr, 0, criteria.nonce);
+		uint64 seq1 = tokenBridge.transferTokens{ value: msg.value/2 }(tokenIn, amountIn, recepient.mayanChainId, recepient.mayanAddr, 0, criteria.nonce);
 
 		MayanStructs.Swap memory swapStruct = MayanStructs.Swap({
 			payloadID: 1,
@@ -96,7 +96,7 @@ contract MayanSwap {
 
 		uint256 amountIn = deNormalizeAmount(normalizedAmount, 18);
 
-		uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: amountIn + wormholeFee }(recepient.mayanChain, recepient.mayanAddr, 0, criteria.nonce);
+		uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: amountIn + wormholeFee }(recepient.mayanChainId, recepient.mayanAddr, 0, criteria.nonce);
 
 		uint dust = msg.value - 2*wormholeFee - amountIn;
 		if (dust > 0) {
