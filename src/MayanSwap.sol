@@ -27,7 +27,7 @@ contract MayanSwap {
 	struct Criteria {
 		uint256 transferDeadline;
 		uint64 swapDeadline;
-		uint256 amountOutMin;
+		uint64 amountOutMin;
 		uint32 nonce;
 	}
 
