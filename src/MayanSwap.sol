@@ -43,7 +43,7 @@ contract MayanSwap {
 		guardian = msg.sender;
 	}
 
-	function swap(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChain, Criteria memory criteria, address tokenIn, uint256 amountIn) public payable returns (uint64 sequence) {
+	function swap(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria, address tokenIn, uint256 amountIn) public payable returns (uint64 sequence) {
 		require(paused == false, 'contract is paused');
 		require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
 
@@ -62,12 +62,12 @@ contract MayanSwap {
 
 		MayanStructs.Swap memory swapStruct = MayanStructs.Swap({
 			payloadID: 1,
-			tokenAddress: tokenOutAddr,
-			tokenChain: tokenOutChain,
-			to: recepient.destAddr,
-			toChain: recepient.destChainId,
-			from: bytes32(uint256(uint160(msg.sender))),
-			fromChain: tokenBridge.chainId(),
+			tokenAddr: tokenOutAddr,
+			tokenChainId: tokenOutChainId,
+			destAddr: recepient.destAddr,
+			destChainId: recepient.destChainId,
+			sourceAddr: bytes32(uint256(uint160(msg.sender))),
+			sourceChainId: tokenBridge.chainId(),
 			sequence: seq1,
 			amountOutMin: criteria.amountOutMin,
 			deadline: criteria.swapDeadline,
@@ -83,7 +83,7 @@ contract MayanSwap {
 		}(criteria.nonce, encoded, tokenBridge.finality());
 	}
 
-	function wrapAndSwapETH(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChain, Criteria memory criteria) public payable returns (uint64 sequence) {
+	function wrapAndSwapETH(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria) public payable returns (uint64 sequence) {
 		require(paused == false, 'contract is paused');
 		require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
 		uint wormholeFee = tokenBridge.wormhole().messageFee();
@@ -105,12 +105,12 @@ contract MayanSwap {
 
 		MayanStructs.Swap memory swapStruct = MayanStructs.Swap({
 			payloadID: 1,
-			tokenAddress: tokenOutAddr,
-			tokenChain: tokenOutChain,
-			to: recepient.destAddr,
-			toChain: recepient.destChainId,
-			from: bytes32(uint256(uint160(msg.sender))),
-			fromChain: tokenBridge.chainId(),
+			tokenAddr: tokenOutAddr,
+			tokenChainId: tokenOutChainId,
+			destAddr: recepient.destAddr,
+			destChainId: recepient.destChainId,
+			sourceAddr: bytes32(uint256(uint160(msg.sender))),
+			sourceChainId: tokenBridge.chainId(),
 			sequence: seq1,
 			amountOutMin: criteria.amountOutMin,
 			deadline: criteria.swapDeadline,
@@ -148,12 +148,12 @@ contract MayanSwap {
 	function encodeSwap(MayanStructs.Swap memory s) public pure returns(bytes memory encoded) {
 		encoded = abi.encodePacked(
 			s.payloadID,
-			s.tokenAddress,
-			s.tokenChain,
-			s.to,
-			s.toChain,
-			s.from,
-			s.fromChain,
+			s.tokenAddr,
+			s.tokenChainId,
+			s.destAddr,
+			s.destChainId,
+			s.sourceAddr,
+			s.sourceChainId,
 			s.sequence,
 			s.amountOutMin,
 			s.deadline,
