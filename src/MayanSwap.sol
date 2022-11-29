@@ -34,6 +34,7 @@ contract MayanSwap {
 	struct Recepient {
 		bytes32 mayanAddr;
 		uint16 mayanChainId;
+		bytes32 auctionAddr;
 		bytes32 destAddr;
 		uint16 destChainId;
 	}
@@ -73,7 +74,8 @@ contract MayanSwap {
 			deadline: criteria.swapDeadline,
 			swapFee: relayerFees.swapFee,
 			redeemFee: relayerFees.redeemFee,
-			refundFee: relayerFees.refundFee
+			refundFee: relayerFees.refundFee,
+			auctionAddr: recepient.auctionAddr
 		});
 
 		bytes memory encoded = encodeSwap(swapStruct);
@@ -116,7 +118,8 @@ contract MayanSwap {
 			deadline: criteria.swapDeadline,
 			swapFee: relayerFees.swapFee,
 			redeemFee: relayerFees.redeemFee,
-			refundFee: relayerFees.refundFee
+			refundFee: relayerFees.refundFee,
+			auctionAddr: recepient.auctionAddr
 		});
 
 		bytes memory encoded = encodeSwap(swapStruct);
@@ -159,7 +162,8 @@ contract MayanSwap {
 			s.deadline,
 			s.swapFee,
 			s.redeemFee,
-			s.refundFee
+			s.refundFee,
+			s.auctionAddr
 		);
 	}
 

@@ -30,5 +30,7 @@ contract MayanStructs {
 		uint64 redeemFee;
 		// Refund relayer fee
 		uint64 refundFee;
+		// Auction program address
+		bytes32 auctionAddr;
 	}
 }
