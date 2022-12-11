@@ -32,5 +32,15 @@ contract MayanStructs {
 		uint64 refundFee;
 		// Auction program address
 		bytes32 auctionAddr;
+		// unwrap in redeem
+		bool unwrapRedeem;
+		// unwrap on refund
+		bool unwrapRefund;
+	}
+
+	struct Redeem {
+		bytes32 recepient;
+		uint64 relayerFee;
+		bool unwrap;
 	}
 }
