@@ -85,7 +85,8 @@ contract MayanSwap {
 			unwrapRefund: false
 		});
 
-		bytes memory encoded = encodeSwap(swapStruct);
+		bytes memory encoded = encodeSwap(swapStruct)
+			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund));
 
 		sequence = tokenBridge.wormhole().publishMessage{
 			value : msg.value/2
@@ -131,7 +132,8 @@ contract MayanSwap {
 			unwrapRefund: true
 		});
 
-		bytes memory encoded = encodeSwap(swapStruct);
+		bytes memory encoded = encodeSwap(swapStruct)
+			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund));
 
 		sequence = tokenBridge.wormhole().publishMessage{
 			value : wormholeFee
@@ -143,7 +145,13 @@ contract MayanSwap {
 		ITokenBridge.TransferWithPayload memory transferPayload = tokenBridge.parseTransferWithPayload(vm.payload);
 		MayanStructs.Redeem memory redeemPayload = parseRedeemPayload(transferPayload.payload);
 
-		address tokenAddr = truncateAddress(transferPayload.tokenAddress);
+		address tokenAddr;
+		if (transferPayload.tokenChain == tokenBridge.chainId()) {
+			tokenAddr = truncateAddress(transferPayload.tokenAddress);
+		} else {
+			tokenAddr = tokenBridge.wrappedAsset(transferPayload.tokenChain, transferPayload.tokenAddress);
+		}
+
 		uint256 amount = IERC20(tokenAddr).balanceOf(address(this));
 		tokenBridge.completeTransferWithPayload(encodedVm);
 		amount = IERC20(tokenAddr).balanceOf(address(this)) - amount;
@@ -153,7 +161,7 @@ contract MayanSwap {
 
 		address recepient = truncateAddress(redeemPayload.recepient);
 
-		if (tokenAddr == address(tokenBridge.WETH()) && redeemPayload.unwrap) {
+		if (redeemPayload.unwrap && tokenAddr == address(tokenBridge.WETH())) {
 			tokenBridge.WETH().withdraw(amount);
 			payable(msg.sender).transfer(relayerFee);
 			payable(recepient).transfer(amount - relayerFee);
@@ -180,12 +188,12 @@ contract MayanSwap {
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
-		require(bytes12(b) == 0, "invalid EVM address");
+		require(bytes12(b) == 0, 'invalid EVM address');
 		return address(uint160(uint256(b)));
 	}
 
 	function decimalsOf(address token) internal view returns(uint8) {
-		(,bytes memory queriedDecimals) = token.staticcall(abi.encodeWithSignature("decimals()"));
+		(,bytes memory queriedDecimals) = token.staticcall(abi.encodeWithSignature('decimals()'));
 		return abi.decode(queriedDecimals, (uint8));
 	}
 
@@ -251,4 +259,6 @@ contract MayanSwap {
 		require(to != address(0), 'transfer to the zero address');
 		to.transfer(amount);
 	}
+
+    receive() external payable {}
 }
