@@ -56,9 +56,8 @@ contract MayanSwap {
 		uint8 decimals = decimalsOf(tokenIn);
 		uint256 normalizedAmount = normalizeAmount(amountIn, decimals);
 
-		require(relayerFees.swapFee < normalizedAmount, 'swap fee exceeds amount');
+		require(relayerFees.swapFee + relayerFees.refundFee < normalizedAmount, 'fees exceed amount');
 		require(relayerFees.redeemFee < criteria.amountOutMin, 'redeem fee exceeds min output');
-		require(relayerFees.refundFee < normalizedAmount, 'refund fee exceeds amount');
 
 		amountIn = deNormalizeAmount(normalizedAmount, decimals);
 
@@ -100,9 +99,8 @@ contract MayanSwap {
 
 		uint256 normalizedAmount = normalizeAmount(msg.value - 2*wormholeFee, 18);
 		
-		require(relayerFees.swapFee < normalizedAmount, 'swap fee exceeds amount');
+		require(relayerFees.swapFee + relayerFees.refundFee < normalizedAmount, 'fees exceed amount');
 		require(relayerFees.redeemFee < criteria.amountOutMin, 'redeem fee exceeds min output');
-		require(relayerFees.refundFee < normalizedAmount, 'refund fee exceeds amount');
 
 		uint256 amountIn = deNormalizeAmount(normalizedAmount, 18);
 
