@@ -7,17 +7,17 @@ contract MayanStructs {
 		// PayloadID uint8 = 1
 		uint8 payloadID;
 		// Address of the ouput token. Left-zero-padded if shorter than 32 bytes
-		bytes32 tokenAddress;
+		bytes32 tokenAddr;
 		// Chain ID of the ouput token
-		uint16 tokenChain;
+		uint16 tokenChainId;
 		// Address of the recipient. Left-zero-padded if shorter than 32 bytes
-		bytes32 to;
+		bytes32 destAddr;
 		// Chain ID of the recipient
-		uint16 toChain;
+		uint16 destChainId;
 		// Address of sender (for revert scenario)
-		bytes32 from;
+		bytes32 sourceAddr;
 		// ChainId of sender (for revert scenario)
-		uint16 fromChain;
+		uint16 sourceChainId;
 		// Sequence of transfer vaa
 		uint64 sequence;
 		// Minimum amount our
@@ -30,5 +30,17 @@ contract MayanStructs {
 		uint64 redeemFee;
 		// Refund relayer fee
 		uint64 refundFee;
+		// Auction program address
+		bytes32 auctionAddr;
+		// unwrap in redeem
+		bool unwrapRedeem;
+		// unwrap on refund
+		bool unwrapRefund;
+	}
+
+	struct Redeem {
+		bytes32 recepient;
+		uint64 relayerFee;
+		bool unwrap;
 	}
 }
