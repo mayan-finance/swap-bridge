@@ -42,6 +42,7 @@ contract MayanSwap {
 		bytes32 auctionAddr;
 		bytes32 destAddr;
 		uint16 destChainId;
+		bytes32 referrer;
 	}
 
 	constructor(address _tokenBridge) {
@@ -85,7 +86,7 @@ contract MayanSwap {
 		});
 
 		bytes memory encoded = encodeSwap(swapStruct)
-			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund));
+			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer));
 
 		sequence = tokenBridge.wormhole().publishMessage{
 			value : msg.value/2
@@ -131,7 +132,7 @@ contract MayanSwap {
 		});
 
 		bytes memory encoded = encodeSwap(swapStruct)
-			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund));
+			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer));
 
 		sequence = tokenBridge.wormhole().publishMessage{
 			value : wormholeFee
