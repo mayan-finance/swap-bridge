@@ -179,7 +179,7 @@ contract MayanSwift {
 		emit CancelRequested(key);
 	}
 
-	function doCancel(bytes32 key) public {
+	function localCancel(bytes32 key) public {
 		Order memory order = orders[key];
 		require(order.status == Status.CREATED, 'order status is not created');
 		require(cancelRequests[key] > 0, 'cancel request not exists');
@@ -205,6 +205,7 @@ contract MayanSwift {
         uint index = 0;
 
 		swift.action = encoded.toUint8(index);
+		index += 1;
 
 		require(swift.action == 1 || swift.action == 2, 'invalid action');
 
@@ -226,9 +227,6 @@ contract MayanSwift {
 		swift.recepient = encoded.toBytes32(index);
 		index += 32;
 
-		swift.action = encoded.toUint8(index);
-		index += 1;
-
         require(encoded.length == index, 'invalid swift msg');
 	}
 
@@ -236,4 +234,36 @@ contract MayanSwift {
 		require(bytes12(b) == 0, 'invalid EVM address');
 		return address(uint160(uint256(b)));
 	}
+
+	function setPause(bool _pause) public {
+		require(msg.sender == guardian, 'only guardian');
+		paused = _pause;
+	}
+
+	function isPaused() public view returns(bool) {
+		return paused;
+	}
+
+	function changeGuardian(address newGuardian) public {
+		require(msg.sender == guardian, 'only guardian');
+		nextGuardian = newGuardian;
+	}
+
+	function claimGuardian() public {
+		require(msg.sender == nextGuardian, 'only next guardian');
+		guardian = nextGuardian;
+	}
+
+	function sweepToken(address token, uint256 amount, address to) public {
+		require(msg.sender == guardian, 'only guardian');
+		IERC20(token).safeTransfer(to, amount);
+	}
+
+	function sweepEth(uint256 amount, address payable to) public {
+		require(msg.sender == guardian, 'only guardian');
+		require(to != address(0), 'transfer to the zero address');
+		to.transfer(amount);
+	}
+
+    receive() external payable {}
 }
