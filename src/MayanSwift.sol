@@ -260,17 +260,6 @@ contract MayanSwift {
 		guardian = nextGuardian;
 	}
 
-	function sweepToken(address token, uint256 amount, address to) public {
-		require(msg.sender == guardian, 'only guardian');
-		IERC20(token).safeTransfer(to, amount);
-	}
-
-	function sweepEth(uint256 amount, address payable to) public {
-		require(msg.sender == guardian, 'only guardian');
-		require(to != address(0), 'transfer to the zero address');
-		to.transfer(amount);
-	}
-
 	function setEmitter(uint16 chainId, bytes32 emitter) public {
 		require(msg.sender == guardian, 'only guardian');
 		require(emitters[chainId] == bytes32(0), 'emitter exists');
