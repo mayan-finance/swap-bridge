@@ -25,22 +25,18 @@ contract MayanSwift {
 	bool paused;
 
 	struct Order {
-		address sourceAddr;
 		address tokenIn;
 		uint256 amountIn;
 		bytes32 tokenOut;
 		uint64 amountOut;
-		uint16 destChain;
 		bytes32 destAddr;
 		Status status;
 	}
 
 	enum Status {
-		NONE,
 		CREATED,
-		CANCELED,
 		COMPLETED,
-		LOCAL_CANCELED
+		CANCELED
 	}
 
 	struct Swift {
@@ -53,7 +49,6 @@ contract MayanSwift {
 		bytes32 recipient;
 	}
 
-
 	constructor(address _wormhole) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
@@ -61,8 +56,6 @@ contract MayanSwift {
 
 	mapping(uint16 => bytes32) emitters;
 	mapping(bytes32 => Order) orders;
-	mapping(bytes32 => uint256) cancelRequests;
-	uint64 orderIndex = 0;
 
 	function createEthOrder(bytes32 key, bytes32 tokenOut, uint64 amountOut, uint16 destChain, bytes32 destAddr) public payable {
 		require(paused == false, 'contract is paused');
@@ -71,12 +64,10 @@ contract MayanSwift {
 		require(orders[key].amountIn == 0, 'duplicate key');
 
 		orders[key] = Order({
-			sourceAddr: msg.sender,
 			tokenIn: address(0),
 			amountIn: msg.value,
 			tokenOut: tokenOut,
 			amountOut: amountOut,
-			destChain: destChain,
 			destAddr: destAddr,
 			status: Status.CREATED
 		});
@@ -96,12 +87,10 @@ contract MayanSwift {
 		require(orders[key].amountIn == 0, 'duplicate key');
 
 		orders[key] = Order({
-			sourceAddr: msg.sender,
 			tokenIn: tokenIn,
 			amountIn: amountIn,
 			tokenOut: tokenOut,
 			amountOut: amountOut,
-			destChain: destChain,
 			destAddr: destAddr,
 			status: Status.CREATED
 		});
@@ -118,7 +107,7 @@ contract MayanSwift {
 		Swift memory swift = parseSwiftPayload(vm.payload);
 		Order memory order = orders[swift.key];
 
-		require(vm.emitterChainId == order.destChain, 'invalid emitter chain');
+		require(vm.emitterChainId == 1, 'invalid emitter chain');
 		require(order.status == Status.CREATED, 'order status not created');
 		require(swift.amountOut == order.amountOut, 'invalid amount out');
 		require(swift.sourceChain == wormhole.chainId(), 'invalid source chain');
@@ -147,7 +136,7 @@ contract MayanSwift {
 		Swift memory swift = parseSwiftPayload(vm.payload);
 		Order memory order = orders[swift.key];
 
-		require(vm.emitterChainId == order.destChain, 'invalid emitter chain');
+		require(vm.emitterChainId == 1, 'invalid emitter chain');
 		require(order.status == Status.CREATED, 'order status is not created');
 		require(swift.amountOut == order.amountOut, 'invalid amount out');
 		require(swift.sourceChain == wormhole.chainId(), 'invalid source chain');
@@ -157,41 +146,14 @@ contract MayanSwift {
 		
 		orders[swift.key].status = Status.CANCELED;
 		
+		address recipient = truncateAddress(swift.recipient);
 		if (order.tokenIn == address(0)) {
-			payable(order.sourceAddr).transfer(order.amountIn);
+			payable(recipient).transfer(order.amountIn);
 		} else {
-			IERC20(order.tokenIn).safeTransfer(order.sourceAddr, order.amountIn);
+			IERC20(order.tokenIn).safeTransfer(recipient, order.amountIn);
 		}
 
 		emit OrderCanceled(swift.key);
-	}
-
-	function requestCancel(bytes32 key) public {
-		Order memory order = orders[key];
-		require(msg.sender == order.sourceAddr, 'invalid sender');
-		require(order.status == Status.CREATED, 'order status is not created');
-		require(cancelRequests[key] == 0, 'cancel request exists');
-
-		cancelRequests[key] = block.timestamp;
-
-		emit CancelRequested(key);
-	}
-
-	function localCancel(bytes32 key) public {
-		Order memory order = orders[key];
-		require(order.status == Status.CREATED, 'order status is not created');
-		require(cancelRequests[key] > 0, 'cancel request not exists');
-		require(block.timestamp - cancelRequests[key] > 604800, 'too early to cancel');
-
-		orders[key].status = Status.LOCAL_CANCELED;
-
-		if (order.tokenIn == address(0)) {
-			payable(order.sourceAddr).transfer(order.amountIn);
-		} else {
-			IERC20(order.tokenIn).safeTransfer(order.sourceAddr, order.amountIn);
-		}
-
-		emit LocalCanceled(key);
 	}
 
 	function parseSwiftPayload(bytes memory encoded) public pure returns (Swift memory swift) {
@@ -257,13 +219,7 @@ contract MayanSwift {
 		return orders[key];
 	}
 
-	function getCancelRequest(bytes32 key) public view returns (uint256) {
-		return cancelRequests[key];
-	}
-
 	function getEmitter(uint16 chainId) public view returns (bytes32) {
 		return emitters[chainId];
 	}
-
-    receive() external payable {}
 }
