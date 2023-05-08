@@ -22,6 +22,7 @@ contract L2Swap {
 	address nextGuardian;
 	bool paused;
 	IWETH weth;
+	uint16 homeChainId;
 
 	struct RelayerFees {
 		uint64 swapFee;
@@ -33,6 +34,7 @@ contract L2Swap {
 		uint256 transferDeadline;
 		uint64 swapDeadline;
 		uint64 amountOutMin;
+		uint64 gasDrop;
 		bool unwrap;
 		uint32 nonce;
 	}
@@ -48,6 +50,7 @@ contract L2Swap {
 
 	constructor(address _tokenBridge, address _weth) {
 		tokenBridge = ITokenBridge(_tokenBridge);
+		homeChainId = tokenBridge.chainId();
 		guardian = msg.sender;
 		weth = IWETH(_weth);
 	}
@@ -55,6 +58,9 @@ contract L2Swap {
 	function swap(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria, address tokenIn, uint256 amountIn) public payable returns (uint64 sequence) {
 		require(paused == false, 'contract is paused');
 		require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
+		if (criteria.unwrap) {
+			require(criteria.gasDrop == 0, 'gas drop not allowed');
+		}
 
 		uint8 decimals = decimalsOf(tokenIn);
 		uint256 normalizedAmount = normalizeAmount(amountIn, decimals);
@@ -75,7 +81,7 @@ contract L2Swap {
 			destAddr: recepient.destAddr,
 			destChainId: recepient.destChainId,
 			sourceAddr: bytes32(uint256(uint160(msg.sender))),
-			sourceChainId: tokenBridge.chainId(),
+			sourceChainId: homeChainId,
 			sequence: seq1,
 			amountOutMin: criteria.amountOutMin,
 			deadline: criteria.swapDeadline,
@@ -88,7 +94,7 @@ contract L2Swap {
 		});
 
 		bytes memory encoded = encodeSwap(swapStruct)
-			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer));
+			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer, criteria.gasDrop));
 
 		sequence = tokenBridge.wormhole().publishMessage{
 			value : msg.value/2
@@ -98,6 +104,10 @@ contract L2Swap {
 	function wrapAndSwapETH(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria) public payable returns (uint64 sequence) {
 		require(paused == false, 'contract is paused');
 		require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
+		if (criteria.unwrap) {
+			require(criteria.gasDrop == 0, 'gas drop not allowed');
+		}
+
 		uint wormholeFee = tokenBridge.wormhole().messageFee();
 
 		uint256 normalizedAmount = normalizeAmount(msg.value - 2*wormholeFee, 18);
@@ -123,7 +133,7 @@ contract L2Swap {
 			destAddr: recepient.destAddr,
 			destChainId: recepient.destChainId,
 			sourceAddr: bytes32(uint256(uint160(msg.sender))),
-			sourceChainId: tokenBridge.chainId(),
+			sourceChainId: homeChainId,
 			sequence: seq1,
 			amountOutMin: criteria.amountOutMin,
 			deadline: criteria.swapDeadline,
@@ -136,20 +146,20 @@ contract L2Swap {
 		});
 
 		bytes memory encoded = encodeSwap(swapStruct)
-			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer));
+			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer, criteria.gasDrop));
 
 		sequence = tokenBridge.wormhole().publishMessage{
 			value : wormholeFee
 		}(criteria.nonce, encoded, tokenBridge.finality());
 	}
 
-	function redeem(bytes memory encodedVm) public {
+	function redeem(bytes memory encodedVm) public payable {
 		IWormhole.VM memory vm = tokenBridge.wormhole().parseVM(encodedVm);
 		ITokenBridge.TransferWithPayload memory transferPayload = tokenBridge.parseTransferWithPayload(vm.payload);
 		MayanStructs.Redeem memory redeemPayload = parseRedeemPayload(transferPayload.payload);
 
 		address tokenAddr;
-		if (transferPayload.tokenChain == tokenBridge.chainId()) {
+		if (transferPayload.tokenChain == homeChainId) {
 			tokenAddr = truncateAddress(transferPayload.tokenAddress);
 		} else {
 			tokenAddr = tokenBridge.wrappedAsset(transferPayload.tokenChain, transferPayload.tokenAddress);
@@ -164,6 +174,12 @@ contract L2Swap {
 
 		address recepient = truncateAddress(redeemPayload.recepient);
 
+		if (redeemPayload.gasDrop > 0) {
+			uint256 gasDrop = deNormalizeAmount(uint256(redeemPayload.gasDrop), decimalsOf(address(weth)));
+			require(msg.value == gasDrop, 'incorrect gas drop');
+			payable(recepient).transfer(gasDrop);
+		}
+
 		if (redeemPayload.unwrap && tokenAddr == address(weth)) {
 			weth.withdraw(amount);
 			payable(msg.sender).transfer(relayerFee);
@@ -174,7 +190,7 @@ contract L2Swap {
 		}
 
 		emit Redeemed(vm.emitterChainId, vm.emitterAddress, vm.sequence);
-    }
+	}
 
 	function parseRedeemPayload(bytes memory encoded) public pure returns (MayanStructs.Redeem memory r) {
 		uint index = 0;
@@ -188,6 +204,12 @@ contract L2Swap {
 		if (encoded[index] != bytes1(0)) {
 			r.unwrap = true;
 		}
+		index += 1;
+
+		r.gasDrop = encoded.toUint64(index);
+		index += 8;
+
+		require(index == encoded.length, 'invalid redeem size');
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
@@ -261,6 +283,10 @@ contract L2Swap {
 		require(msg.sender == guardian, 'only guardian');
 		require(to != address(0), 'transfer to the zero address');
 		to.transfer(amount);
+	}
+
+	function getWeth() public view returns(address) {
+		return address(weth);
 	}
 
     receive() external payable {}
