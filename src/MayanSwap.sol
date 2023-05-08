@@ -190,6 +190,33 @@ contract MayanSwap {
 		emit Redeemed(vm.emitterChainId, vm.emitterAddress, vm.sequence);
 	}
 
+	function redeemAndUnwrap(bytes memory encodedVm) public {
+		IWormhole.VM memory vm = tokenBridge.wormhole().parseVM(encodedVm);
+
+		ITokenBridge.TransferWithPayload memory transferPayload = tokenBridge.parseTransferWithPayload(vm.payload);
+		require(transferPayload.tokenChain == homeChainId, 'not home chain');
+		
+		address tokenAddr = truncateAddress(transferPayload.tokenAddress);
+		require(tokenAddr == address(weth), 'not weth');
+
+		MayanStructs.Redeem memory redeemPayload = parseRedeemPayload(transferPayload.payload);
+		require(redeemPayload.unwrap, 'not unwrap');
+
+		uint256 amount = address(this).balance;
+		tokenBridge.completeTransferAndUnwrapETHWithPayload(encodedVm);
+		amount = address(this).balance - amount;
+
+		uint256 relayerFee = deNormalizeAmount(uint256(redeemPayload.relayerFee), decimalsOf(tokenAddr));
+		require(amount > relayerFee, 'relayer fee exeeds amount');
+
+		address recepient = truncateAddress(redeemPayload.recepient);
+
+		payable(msg.sender).transfer(relayerFee);
+		payable(recepient).transfer(amount - relayerFee);
+
+		emit Redeemed(vm.emitterChainId, vm.emitterAddress, vm.sequence);
+	}
+
 	function parseRedeemPayload(bytes memory encoded) public pure returns (MayanStructs.Redeem memory r) {
 		uint index = 0;
 
