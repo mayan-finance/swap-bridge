@@ -9,8 +9,7 @@ import "./interfaces/IWETH.sol";
 import "./libs/BytesLib.sol";
 
 contract MayanSwift {
-	event OrderCreatedWithEth(bytes32 key);
-	event OrderCreatedWithToken(bytes32 key);
+	event OrderCreated(bytes32 key);
 	event OrderCompleted(bytes32 key);
 	event OrderCanceled(bytes32 key);
 
@@ -72,7 +71,7 @@ contract MayanSwift {
 			status: Status.CREATED
 		});
 
-		emit OrderCreatedWithEth(key);
+		emit OrderCreated(key);
 	}
 
 	function createOrderWithToken(bytes32 key, bytes32 tokenOut, uint64 amountOut, bytes32 destAddr, address tokenIn, uint256 amountIn) public {
@@ -94,7 +93,7 @@ contract MayanSwift {
 			status: Status.CREATED
 		});
 
-		emit OrderCreatedWithToken(key);
+		emit OrderCreated(key);
 	}
 
 	function completeOrder(bytes memory encodedVm) public {
