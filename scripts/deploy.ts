@@ -1,12 +1,16 @@
 import { ethers } from "hardhat";
 
-async function main(tokenBridge: string) {
+async function main(tokenBridgeAddr: string) {
+	const tokenBridge = await ethers.getContractAt("ITokenBridge", tokenBridgeAddr);
+
 	const MayanSwap = await ethers.getContractFactory("MayanSwap");
-	const mayanSwap = await MayanSwap.deploy(tokenBridge);
+
+	const weth = await tokenBridge.WETH();
+	const mayanSwap = await MayanSwap.deploy(tokenBridgeAddr, weth);
 
 	const deployed = await mayanSwap.deployed();
 
-	console.log(`Deployed MayanSwap at ${deployed.address} with TokenBridge ${tokenBridge}`);
+	console.log(`Deployed MayanSwap at ${deployed.address} with TokenBridge ${tokenBridgeAddr} and WETH ${weth}`);
 }
 
 if (!process.env.TOKEN_BRIDGE) {
