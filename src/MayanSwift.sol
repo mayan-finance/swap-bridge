@@ -9,7 +9,8 @@ import "./interfaces/IWETH.sol";
 import "./libs/BytesLib.sol";
 
 contract MayanSwift {
-	event OrderCreated(bytes32 key);
+	event OrderCreatedWithEth(bytes32 key);
+	event OrderCreatedWithToken(bytes32 key);
 	event OrderCompleted(bytes32 key);
 	event OrderCanceled(bytes32 key);
 
@@ -17,7 +18,8 @@ contract MayanSwift {
 	using BytesLib for bytes;
 
 	IWormhole wormhole;
-	bytes32 emitter;
+	uint16 emitterChainId;
+	bytes32 emitterAddr;
 	address guardian;
 	address nextGuardian;
 	bool paused;
@@ -47,15 +49,16 @@ contract MayanSwift {
 		bytes32 recipient;
 	}
 
-	constructor(address _wormhole, bytes32 _emitter) {
+	constructor(address _wormhole, uint16 _emitterChainId, bytes32 _emitterAddr) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
-		emitter = _emitter;
+		emitterChainId = _emitterChainId;
+		emitterAddr = _emitterAddr;
 	}
 
 	mapping(bytes32 => Order) orders;
 
-	function createEthOrder(bytes32 key, bytes32 tokenOut, uint64 amountOut, bytes32 destAddr) public payable {
+	function createOrderWithEth(bytes32 key, bytes32 tokenOut, uint64 amountOut, bytes32 destAddr) public payable {
 		require(paused == false, 'contract is paused');
 		require(msg.value > 0, 'value is zero');
 		require(orders[key].amountIn == 0, 'duplicate key');
@@ -69,10 +72,10 @@ contract MayanSwift {
 			status: Status.CREATED
 		});
 
-		emit OrderCreated(key);
+		emit OrderCreatedWithEth(key);
 	}
 
-	function createTokenOrder(bytes32 key, bytes32 tokenOut, uint64 amountOut, bytes32 destAddr, address tokenIn, uint256 amountIn) public {
+	function createOrderWithToken(bytes32 key, bytes32 tokenOut, uint64 amountOut, bytes32 destAddr, address tokenIn, uint256 amountIn) public {
 		require(paused == false, 'contract is paused');
 
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
@@ -91,19 +94,19 @@ contract MayanSwift {
 			status: Status.CREATED
 		});
 
-		emit OrderCreated(key);
+		emit OrderCreatedWithToken(key);
 	}
 
 	function completeOrder(bytes memory encodedVm) public {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
-		require(vm.emitterAddress == emitter, 'invalid emitter address');
+		require(vm.emitterChainId == emitterChainId, 'invalid emitter chain');
+		require(vm.emitterAddress == emitterAddr, 'invalid emitter address');
 
 		Swift memory swift = parseSwiftPayload(vm.payload);
 		Order memory order = orders[swift.key];
 
-		require(vm.emitterChainId == 1, 'invalid emitter chain');
 		require(order.status == Status.CREATED, 'order status not created');
 		require(swift.amountOut == order.amountOut, 'invalid amount out');
 		require(swift.sourceChain == wormhole.chainId(), 'invalid source chain');
@@ -127,12 +130,12 @@ contract MayanSwift {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
-		require(vm.emitterAddress == emitter, 'invalid emitter address');
+		require(vm.emitterChainId == emitterChainId, 'invalid emitter chain');
+		require(vm.emitterAddress == emitterAddr, 'invalid emitter address');
 
 		Swift memory swift = parseSwiftPayload(vm.payload);
 		Order memory order = orders[swift.key];
 
-		require(vm.emitterChainId == 1, 'invalid emitter chain');
 		require(order.status == Status.CREATED, 'order status is not created');
 		require(swift.amountOut == order.amountOut, 'invalid amount out');
 		require(swift.sourceChain == wormhole.chainId(), 'invalid source chain');
@@ -207,5 +210,13 @@ contract MayanSwift {
 
 	function getOrder(bytes32 key) public view returns (Order memory) {
 		return orders[key];
+	}
+
+	function getEmitterChainId() public view returns (uint16) {
+		return emitterChainId;
+	}
+
+	function getEmitterAddr() public view returns (bytes32) {
+		return emitterAddr;
 	}
 }
