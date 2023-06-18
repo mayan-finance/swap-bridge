@@ -33,7 +33,6 @@ contract MayanSwap {
 		uint64 swapDeadline;
 		uint64 amountOutMin;
 		bool unwrap;
-		uint32 nonce;
 	}
 
 	struct Recepient {
@@ -43,6 +42,7 @@ contract MayanSwap {
 		bytes32 destAddr;
 		uint16 destChainId;
 		bytes32 referrer;
+		bytes customPayload;
 	}
 
 	constructor(address _tokenBridge) {
@@ -64,7 +64,7 @@ contract MayanSwap {
 
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 		IERC20(tokenIn).safeIncreaseAllowance(address(tokenBridge), amountIn);
-		uint64 seq1 = tokenBridge.transferTokens{ value: msg.value/2 }(tokenIn, amountIn, recepient.mayanChainId, recepient.mayanAddr, 0, criteria.nonce);
+		uint64 seq1 = tokenBridge.transferTokens{ value: msg.value/2 }(tokenIn, amountIn, recepient.mayanChainId, recepient.mayanAddr, 0, 0);
 
 		MayanStructs.Swap memory swapStruct = MayanStructs.Swap({
 			payloadID: 1,
@@ -86,11 +86,11 @@ contract MayanSwap {
 		});
 
 		bytes memory encoded = encodeSwap(swapStruct)
-			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer));
+			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer, recepient.customPayload));
 
 		sequence = tokenBridge.wormhole().publishMessage{
 			value : msg.value/2
-		}(criteria.nonce, encoded, tokenBridge.finality());
+		}(0, encoded, tokenBridge.finality());
 	}
 
 	function wrapAndSwapETH(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria) public payable returns (uint64 sequence) {
@@ -105,7 +105,7 @@ contract MayanSwap {
 
 		uint256 amountIn = deNormalizeAmount(normalizedAmount, 18);
 
-		uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: amountIn + wormholeFee }(recepient.mayanChainId, recepient.mayanAddr, 0, criteria.nonce);
+		uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: amountIn + wormholeFee }(recepient.mayanChainId, recepient.mayanAddr, 0, 0);
 
 		uint dust = msg.value - 2*wormholeFee - amountIn;
 		if (dust > 0) {
@@ -132,11 +132,11 @@ contract MayanSwap {
 		});
 
 		bytes memory encoded = encodeSwap(swapStruct)
-			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer));
+			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer, recepient.customPayload));
 
 		sequence = tokenBridge.wormhole().publishMessage{
 			value : wormholeFee
-		}(criteria.nonce, encoded, tokenBridge.finality());
+		}(0, encoded, tokenBridge.finality());
 	}
 
 	function redeem(bytes memory encodedVm) public {
@@ -181,9 +181,10 @@ contract MayanSwap {
 		r.relayerFee = encoded.toUint64(index);
 		index += 8;
 
-		if (encoded[index] != bytes1(0)) {
-			r.unwrap = true;
-		}
+		r.unwrap = encoded[index] != bytes1(0);
+		index + 1;
+
+		r.customPayload = encoded.slice(index, encoded.length - index);
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {

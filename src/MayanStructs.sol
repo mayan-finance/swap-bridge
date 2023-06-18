@@ -26,5 +26,6 @@ contract MayanStructs {
 		bytes32 recepient;
 		uint64 relayerFee;
 		bool unwrap;
+		bytes customPayload;
 	}
 }
