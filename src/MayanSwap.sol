@@ -237,6 +237,8 @@ contract MayanSwap {
 		r.payloadId = encoded.toUint8(index);
 		index += 1;
 
+		require(r.payloadId == 1 || r.payloadId == 2, 'payload id not supported');
+
 		r.recipient = encoded.toBytes32(index);
 		index += 32;
 
@@ -251,6 +253,8 @@ contract MayanSwap {
 
 		if (r.payloadId == 2) {
 			r.customPayload = encoded.slice(index, encoded.length - index);
+		} else {
+			require(index == encoded.length, 'invalid payload length');
 		}
 	}
 
