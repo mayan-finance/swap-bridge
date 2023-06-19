@@ -27,5 +27,6 @@ contract MayanStructs {
 		uint64 relayerFee;
 		bool unwrap;
 		uint64 gasDrop;
+		bytes customPayload;
 	}
 }
