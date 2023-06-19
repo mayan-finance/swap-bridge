@@ -97,6 +97,7 @@ contract MayanSwap {
 			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recipient.referrer, criteria.gasDrop));
 
 		if (swapStruct.payloadId == 2) {
+			require(swapStruct.destChainId == recipient.mayanChainId, 'invalid chain id with payload');
 			encoded = encoded.concat(abi.encodePacked(criteria.customPayload));
 		}
 
@@ -151,6 +152,7 @@ contract MayanSwap {
 			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recipient.referrer, criteria.gasDrop));
 
 		if (swapStruct.payloadId == 2) {
+			require(swapStruct.destChainId == recipient.mayanChainId, 'invalid chain id with payload');
 			encoded = encoded.concat(abi.encodePacked(criteria.customPayload));
 		}
 
