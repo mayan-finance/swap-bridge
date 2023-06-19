@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: Apache 2
+// SPDX-License-Identifier: MIT
 
 pragma solidity ^0.8.0;
 
 contract MayanStructs {
 	struct Swap {
-		uint8 payloadID;
+		uint8 payloadId;
 		bytes32 tokenAddr;
 		uint16 tokenChainId;
 		bytes32 destAddr;
@@ -23,7 +23,8 @@ contract MayanStructs {
 	}
 
 	struct Redeem {
-		bytes32 recepient;
+		uint8 payloadId;
+		bytes32 recipient;
 		uint64 relayerFee;
 		bool unwrap;
 		uint64 gasDrop;

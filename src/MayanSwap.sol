@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2
+// SPDX-License-Identifier: MIT
 
 pragma solidity ^0.8.0;
 
@@ -55,7 +55,7 @@ contract MayanSwap {
 		weth = IWETH(_weth);
 	}
 
-	function swap(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria, address tokenIn, uint256 amountIn) public payable returns (uint64 sequence) {
+	function swap(RelayerFees memory relayerFees, Recepient memory recipient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria, address tokenIn, uint256 amountIn) public payable returns (uint64 sequence) {
 		require(paused == false, 'contract is paused');
 		require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
 		if (criteria.unwrap) {
@@ -72,14 +72,14 @@ contract MayanSwap {
 
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 		IERC20(tokenIn).safeIncreaseAllowance(address(tokenBridge), amountIn);
-		uint64 seq1 = tokenBridge.transferTokens{ value: msg.value/2 }(tokenIn, amountIn, recepient.mayanChainId, recepient.mayanAddr, 0, 0);
+		uint64 seq1 = tokenBridge.transferTokens{ value: msg.value/2 }(tokenIn, amountIn, recipient.mayanChainId, recipient.mayanAddr, 0, 0);
 
 		MayanStructs.Swap memory swapStruct = MayanStructs.Swap({
-			payloadID: criteria.customPayload.length > 0 ? 2 : 1,
+			payloadId: criteria.customPayload.length > 0 ? 2 : 1,
 			tokenAddr: tokenOutAddr,
 			tokenChainId: tokenOutChainId,
-			destAddr: recepient.destAddr,
-			destChainId: recepient.destChainId,
+			destAddr: recipient.destAddr,
+			destChainId: recipient.destChainId,
 			sourceAddr: bytes32(uint256(uint160(msg.sender))),
 			sourceChainId: homeChainId,
 			sequence: seq1,
@@ -88,15 +88,15 @@ contract MayanSwap {
 			swapFee: relayerFees.swapFee,
 			redeemFee: relayerFees.redeemFee,
 			refundFee: relayerFees.refundFee,
-			auctionAddr: recepient.auctionAddr,
+			auctionAddr: recipient.auctionAddr,
 			unwrapRedeem: criteria.unwrap,
 			unwrapRefund: false
 		});
 
 		bytes memory encoded = encodeSwap(swapStruct)
-			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer, criteria.gasDrop));
+			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recipient.referrer, criteria.gasDrop));
 
-		if (swapStruct.payloadID == 2) {
+		if (swapStruct.payloadId == 2) {
 			encoded = encoded.concat(abi.encodePacked(criteria.customPayload));
 		}
 
@@ -105,7 +105,7 @@ contract MayanSwap {
 		}(0, encoded, tokenBridge.finality());
 	}
 
-	function wrapAndSwapETH(RelayerFees memory relayerFees, Recepient memory recepient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria) public payable returns (uint64 sequence) {
+	function wrapAndSwapETH(RelayerFees memory relayerFees, Recepient memory recipient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria) public payable returns (uint64 sequence) {
 		require(paused == false, 'contract is paused');
 		require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
 		if (criteria.unwrap) {
@@ -121,7 +121,7 @@ contract MayanSwap {
 
 		uint256 amountIn = deNormalizeAmount(normalizedAmount, 18);
 
-		uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: amountIn + wormholeFee }(recepient.mayanChainId, recepient.mayanAddr, 0, 0);
+		uint64 seq1 = tokenBridge.wrapAndTransferETH{ value: amountIn + wormholeFee }(recipient.mayanChainId, recipient.mayanAddr, 0, 0);
 
 		uint dust = msg.value - 2*wormholeFee - amountIn;
 		if (dust > 0) {
@@ -129,11 +129,11 @@ contract MayanSwap {
 		}
 
 		MayanStructs.Swap memory swapStruct = MayanStructs.Swap({
-			payloadID: criteria.customPayload.length > 0 ? 2 : 1,
+			payloadId: criteria.customPayload.length > 0 ? 2 : 1,
 			tokenAddr: tokenOutAddr,
 			tokenChainId: tokenOutChainId,
-			destAddr: recepient.destAddr,
-			destChainId: recepient.destChainId,
+			destAddr: recipient.destAddr,
+			destChainId: recipient.destChainId,
 			sourceAddr: bytes32(uint256(uint160(msg.sender))),
 			sourceChainId: homeChainId,
 			sequence: seq1,
@@ -142,15 +142,15 @@ contract MayanSwap {
 			swapFee: relayerFees.swapFee,
 			redeemFee: relayerFees.redeemFee,
 			refundFee: relayerFees.refundFee,
-			auctionAddr: recepient.auctionAddr,
+			auctionAddr: recipient.auctionAddr,
 			unwrapRedeem: criteria.unwrap,
 			unwrapRefund: true
 		});
 
 		bytes memory encoded = encodeSwap(swapStruct)
-			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recepient.referrer, criteria.gasDrop));
+			.concat(abi.encodePacked(swapStruct.unwrapRedeem, swapStruct.unwrapRefund, recipient.referrer, criteria.gasDrop));
 
-		if (swapStruct.payloadID == 2) {
+		if (swapStruct.payloadId == 2) {
 			encoded = encoded.concat(abi.encodePacked(criteria.customPayload));
 		}
 
@@ -164,9 +164,9 @@ contract MayanSwap {
 		ITokenBridge.TransferWithPayload memory transferPayload = tokenBridge.parseTransferWithPayload(vm.payload);
 		MayanStructs.Redeem memory redeemPayload = parseRedeemPayload(transferPayload.payload);
 
-		address recepient = truncateAddress(redeemPayload.recepient);
-		if (redeemPayload.customPayload.length > 0) {
-			require(msg.sender == recepient, 'not recepient');
+		address recipient = truncateAddress(redeemPayload.recipient);
+		if (redeemPayload.payloadId == 2) {
+			require(msg.sender == recipient, 'not recipient');
 		}
 
 		address tokenAddr;
@@ -186,16 +186,16 @@ contract MayanSwap {
 		if (redeemPayload.gasDrop > 0) {
 			uint256 gasDrop = deNormalizeAmount(uint256(redeemPayload.gasDrop), decimalsOf(address(weth)));
 			require(msg.value == gasDrop, 'incorrect gas drop');
-			payable(recepient).transfer(gasDrop);
+			payable(recipient).transfer(gasDrop);
 		}
 
 		if (redeemPayload.unwrap && tokenAddr == address(weth)) {
 			weth.withdraw(amount);
 			payable(msg.sender).transfer(relayerFee);
-			payable(recepient).transfer(amount - relayerFee);
+			payable(recipient).transfer(amount - relayerFee);
 		} else {
 			IERC20(tokenAddr).safeTransfer(msg.sender, relayerFee);
-			IERC20(tokenAddr).safeTransfer(recepient, amount - relayerFee);
+			IERC20(tokenAddr).safeTransfer(recipient, amount - relayerFee);
 		}
 
 		emit Redeemed(vm.emitterChainId, vm.emitterAddress, vm.sequence);
@@ -213,9 +213,9 @@ contract MayanSwap {
 		MayanStructs.Redeem memory redeemPayload = parseRedeemPayload(transferPayload.payload);
 		require(redeemPayload.unwrap, 'not unwrap');
 
-		address recepient = truncateAddress(redeemPayload.recepient);
-		if (redeemPayload.customPayload.length > 0) {
-			require(msg.sender == recepient, 'not recepient');
+		address recipient = truncateAddress(redeemPayload.recipient);
+		if (redeemPayload.payloadId == 2) {
+			require(msg.sender == recipient, 'not recipient');
 		}
 
 		uint256 amount = address(this).balance;
@@ -226,7 +226,7 @@ contract MayanSwap {
 		require(amount > relayerFee, 'relayer fee exeeds amount');
 
 		payable(msg.sender).transfer(relayerFee);
-		payable(recepient).transfer(amount - relayerFee);
+		payable(recipient).transfer(amount - relayerFee);
 
 		emit Redeemed(vm.emitterChainId, vm.emitterAddress, vm.sequence);
 	}
@@ -234,7 +234,10 @@ contract MayanSwap {
 	function parseRedeemPayload(bytes memory encoded) public pure returns (MayanStructs.Redeem memory r) {
 		uint index = 0;
 
-		r.recepient = encoded.toBytes32(index);
+		r.payloadId = encoded.toUint8(index);
+		index += 1;
+
+		r.recipient = encoded.toBytes32(index);
 		index += 32;
 
 		r.relayerFee = encoded.toUint64(index);
@@ -246,7 +249,9 @@ contract MayanSwap {
 		r.gasDrop = encoded.toUint64(index);
 		index += 8;
 
-		r.customPayload = encoded.slice(index, encoded.length - index);
+		if (r.payloadId == 2) {
+			r.customPayload = encoded.slice(index, encoded.length - index);
+		}
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
@@ -275,7 +280,7 @@ contract MayanSwap {
 
 	function encodeSwap(MayanStructs.Swap memory s) public pure returns(bytes memory encoded) {
 		encoded = abi.encodePacked(
-			s.payloadID,
+			s.payloadId,
 			s.tokenAddr,
 			s.tokenChainId,
 			s.destAddr,
