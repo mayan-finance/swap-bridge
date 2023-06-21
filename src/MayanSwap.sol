@@ -34,8 +34,8 @@ contract MayanSwap {
 		uint256 transferDeadline;
 		uint64 swapDeadline;
 		uint64 amountOutMin;
-		uint64 gasDrop;
 		bool unwrap;
+		uint64 gasDrop;
 		bytes customPayload;
 	}
 
