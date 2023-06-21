@@ -46,6 +46,7 @@ contract MayanSwap {
 		bytes32 destAddr;
 		uint16 destChainId;
 		bytes32 referrer;
+		bytes32 refundAddr;
 	}
 
 	constructor(address _tokenBridge, address _weth) {
@@ -80,7 +81,7 @@ contract MayanSwap {
 			tokenChainId: tokenOutChainId,
 			destAddr: recipient.destAddr,
 			destChainId: recipient.destChainId,
-			sourceAddr: bytes32(uint256(uint160(msg.sender))),
+			sourceAddr: recipient.refundAddr,
 			sourceChainId: homeChainId,
 			sequence: seq1,
 			amountOutMin: criteria.amountOutMin,
@@ -135,7 +136,7 @@ contract MayanSwap {
 			tokenChainId: tokenOutChainId,
 			destAddr: recipient.destAddr,
 			destChainId: recipient.destChainId,
-			sourceAddr: bytes32(uint256(uint160(msg.sender))),
+			sourceAddr: recipient.refundAddr,
 			sourceChainId: homeChainId,
 			sequence: seq1,
 			amountOutMin: criteria.amountOutMin,
