@@ -28,7 +28,7 @@ contract MayanSwift {
 
 	struct Order {
 		bytes32 dstAuthority;
-		uint8 dstChainId;
+		uint16 dstChainId;
 		Status status;
 	}
 
@@ -40,8 +40,8 @@ contract MayanSwift {
 		bytes32 tokenOut;
 		uint256 minAmountOut;
 		uint64 gasDrop;
-		bytes32 destAddr;
-		uint8 destChainId;
+		bytes32 dstAddr;
+		uint16 dstChainId;
 		bytes32 referrerAddr;
 		bytes32 nonce;
 	}
@@ -56,10 +56,10 @@ contract MayanSwift {
 
 	struct SwiftMsg {
 		uint8 action;
-		bytes32 key;
+		bytes32 keyHash;
 		uint16 srcChain;
-		address trader;
-		address tokenIn;
+		bytes32 trader;
+		bytes32 tokenIn;
 		uint256 amountIn;
 		bytes32 recipient;
 	}
@@ -78,21 +78,34 @@ contract MayanSwift {
 		require(paused == false, 'contract is paused');
 		require(msg.value > 0, 'value is zero');
 
-		bytes32 key = keccak256(abi.encodePacked(msg.sender, wormhole.chainId(), address(0), msg.value, tokenOut, minAmountOut, gasDrop, dstAddr, dstChainId, referrerAddr, nonce));
+		Key memory key = Key({
+			trader: msg.sender,
+			srcChainId: wormhole.chainId(),
+			tokenIn: address(0),
+			amountIn: msg.value,
+			tokenOut: tokenOut,
+			minAmountOut: minAmountOut,
+			gasDrop: gasDrop,
+			dstAddr: dstAddr,
+			dstChainId: dstChainId,
+			referrerAddr: referrerAddr,
+			nonce: nonce
+		});
+		bytes32 keyHash = keccak256(encodeKey(key));
 
 		require(dstChainId > 0, 'invalid dest chain id');
-		require(orders[key].dstChainId == 0, 'duplicate key');
+		require(orders[keyHash].dstChainId == 0, 'duplicate key');
 
-		orders[key] = Order({
+		orders[keyHash] = Order({
 			dstAuthority: dstAuthority,
 			dstChainId: dstChainId,
 			status: Status.CREATED
 		});
 
-		emit OrderCreated(key);
+		emit OrderCreated(keyHash);
 	}
 
-	function createOrderWithToken(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 dstAddr, uint8 dstChainId, address tokenIn, uint256 amountIn, bytes32 referrerAddr, bytes32 nonce, bytes32 dstAuthority) public {
+	function createOrderWithToken(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 dstAddr, uint16 dstChainId, address tokenIn, uint256 amountIn, bytes32 referrerAddr, bytes32 nonce, bytes32 dstAuthority) public {
 		require(paused == false, 'contract is paused');
 
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
@@ -113,7 +126,7 @@ contract MayanSwift {
 			referrerAddr: referrerAddr,
 			nonce: nonce
 		});
-		bytes32 keyHash = keccak256(abi.encodePacked(key.trader, key.srcChainId, key.tokenIn, key.amountIn, key.tokenOut, key.minAmountOut, key.gasDrop, key.destAddr, key.destChainId, key.referrerAddr, key.nonce));
+		bytes32 keyHash = keccak256(encodeKey(key));
 
 		require(dstChainId > 0, 'invalid dest chain id');
 		require(orders[keyHash].dstChainId == 0, 'duplicate key');
@@ -147,7 +160,7 @@ contract MayanSwift {
 		require(valid, reason);
 
 		SwiftMsg memory swift = parseSwiftPayload(vm.payload);
-		Order memory order = orders[swift.key];
+		Order memory order = orders[swift.keyHash];
 
 		require(vm.emitterChainId == order.dstChainId, 'invalid emitter chain');
 
@@ -163,16 +176,17 @@ contract MayanSwift {
 		require(swift.srcChain == wormhole.chainId(), 'invalid source chain');
 		require(swift.action == 1, 'wrong action');
 		
-		orders[swift.key].status = Status.UNLOCKED;
+		orders[swift.keyHash].status = Status.UNLOCKED;
 		
 		address recipient = truncateAddress(swift.recipient);
-		if (order.tokenIn == address(0)) {
-			payable(recipient).transfer(order.amountIn);
+		address tokenIn = truncateAddress(swift.tokenIn);
+		if (tokenIn == address(0)) {
+			payable(recipient).transfer(swift.amountIn);
 		} else {
-			IERC20(order.tokenIn).safeTransfer(recipient, order.amountIn);
+			IERC20(tokenIn).safeTransfer(recipient, swift.amountIn);
 		}
 		
-		emit OrderUnlocked(swift.key);
+		emit OrderUnlocked(swift.keyHash);
 	}
 
 	function CompleteCancelOrder(bytes memory encodedVm) public {
@@ -181,7 +195,7 @@ contract MayanSwift {
 		require(valid, reason);
 
 		SwiftMsg memory swift = parseSwiftPayload(vm.payload);
-		Order memory order = orders[swift.key];
+		Order memory order = orders[swift.keyHash];
 
 		require(vm.emitterChainId == order.dstChainId, 'invalid emitter chain');
 
@@ -194,24 +208,25 @@ contract MayanSwift {
 		}
 
 		require(order.status == Status.CREATED, 'order status is not created');
-		require(swift.sourceChain == wormhole.chainId(), 'invalid source chain');
+		require(swift.srcChain == wormhole.chainId(), 'invalid source chain');
 		require(swift.action == 3, 'wrong action');
 		
-		orders[swift.key].status = Status.CANCELED;
+		orders[swift.keyHash].status = Status.CANCEL_COMPLETED;
 		
-		address recipient = truncateAddress(swift.recipient);
-		require(recipient == order.trader, 'invalid canceller');
+		address trader = truncateAddress(swift.trader);
+		require(trader == msg.sender, 'invalid canceller');
 
-		if (swift.tokenIn == address(0)) {
-			payable(recipient).transfer(swift.amountIn);
+		address tokenIn = truncateAddress(swift.tokenIn);
+		if (tokenIn == address(0)) {
+			payable(trader).transfer(swift.amountIn);
 		} else {
-			IERC20(swift.tokenIn).safeTransfer(recipient, swift.amountIn);
+			IERC20(tokenIn).safeTransfer(trader, swift.amountIn);
 		}
 
-		emit CancelCompleted(swift.key);
+		emit CancelCompleted(swift.keyHash);
 	}
 
-	function InitiateCancelOrder(uint16 srcChainId, address tokenIn, uint256 amountIn, bytes32 tokenOut, uint256 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint8 destChainId, bytes32 referrerAddr, bytes32 nonce) public payable returns (uint64 sequence) {
+	function InitiateCancelOrder(uint16 srcChainId, address tokenIn, uint256 amountIn, bytes32 tokenOut, uint256 minAmountOut, uint64 gasDrop, bytes32 dstAddr, uint16 dstChainId, bytes32 referrerAddr, bytes32 nonce) public payable returns (uint64 sequence) {
 		Key memory key = Key({
 			trader: msg.sender,
 			srcChainId: srcChainId,
@@ -220,13 +235,12 @@ contract MayanSwift {
 			tokenOut: tokenOut,
 			minAmountOut: minAmountOut,
 			gasDrop: gasDrop,
-			destAddr: destAddr,
-			destChainId: destChainId,
+			dstAddr: dstAddr,
+			dstChainId: dstChainId,
 			referrerAddr: referrerAddr,
 			nonce: nonce
 		});
-		bytes32 keyHash = keccak256(abi.encodePacked(key));
-
+		bytes32 keyHash = keccak256(encodeKey(key));
 		Order memory order = orders[keyHash];
 
 		require(order.status == Status.CREATED, 'invalid order status');
@@ -247,7 +261,7 @@ contract MayanSwift {
 			value : msg.value
 		}(0, encoded, consistencyLevel);
 
-		emit CancelInitiated(key);
+		emit CancelInitiated(keyHash);
 	}
 
 	function parseSwiftPayload(bytes memory encoded) public pure returns (SwiftMsg memory swiftMsg) {
@@ -274,6 +288,22 @@ contract MayanSwift {
 		}
 
         require(encoded.length == index, 'invalid swift msg');
+	}
+
+	function encodeKey(Key memory key) internal pure returns (bytes memory encoded) {
+		encoded = abi.encodePacked(
+			key.trader,
+			key.srcChainId,
+			key.tokenIn,
+			key.amountIn,
+			key.tokenOut,
+			key.minAmountOut,
+			key.gasDrop,
+			key.dstAddr,
+			key.dstChainId,
+			key.referrerAddr,
+			key.nonce
+		);
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
