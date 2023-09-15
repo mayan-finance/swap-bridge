@@ -20,8 +20,9 @@ contract MayanSwift {
 
 	IWormhole wormhole;
 	address feeCollector;
-	uint16 hqChainId;
-	bytes32 hqAddr;
+	uint16 auctionChainId;
+	bytes32 auctionAddr;
+	bytes32 solanaEmitter;
 	uint8 consistencyLevel;
 	address guardian;
 	address nextGuardian;
@@ -80,12 +81,13 @@ contract MayanSwift {
 		uint64 amountIn;
 	}
 
-	constructor(address _wormhole, address _feeCollector, uint16 _hqChainId, bytes32 _hqAddr, uint8 _consistencyLevel) {
+	constructor(address _wormhole, address _feeCollector, uint16 _auctionChainId, bytes32 _auctionAddr, bytes32 _solanaEmitter, uint8 _consistencyLevel) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
 		feeCollector = _feeCollector;
-		hqChainId = _hqChainId;
-		hqAddr = _hqAddr;
+		auctionChainId = _auctionChainId;
+		auctionAddr = _auctionAddr;
+		solanaEmitter = _solanaEmitter;
 		consistencyLevel = _consistencyLevel;
 	}
 
@@ -169,8 +171,8 @@ contract MayanSwift {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
-		require(vm.emitterChainId == hqChainId, 'invalid HQ chain');
-		require(vm.emitterAddress == hqAddr, 'invalid HQ address');
+		require(vm.emitterChainId == auctionChainId, 'invalid auction chain');
+		require(vm.emitterAddress == auctionAddr, 'invalid auction address');
 
 		FulfillMsg memory fulfillMsg = parseFulfillPayload(vm.payload);
 
@@ -212,10 +214,10 @@ contract MayanSwift {
 
 		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
 
-		if (order.destChainId == hqChainId) {
-			require(vm.emitterAddress == hqAddr, 'invalid emitter address');
-		} else if (order.destAuthority != bytes32(0)) {
+		if (order.destAuthority != bytes32(0)) {
 			require(vm.emitterAddress == order.destAuthority, 'invalid emitter address');
+		} else if (order.destChainId == 1) {
+			require(vm.emitterAddress == solanaEmitter, 'invalid emitter address');
 		} else {
 			require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
 		}
@@ -255,10 +257,10 @@ contract MayanSwift {
 
 		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
 
-		if (order.destChainId == hqChainId) {
-			require(vm.emitterAddress == hqAddr, 'invalid emitter address');
-		} else if (order.destAuthority != bytes32(0)) {
+		if (order.destAuthority != bytes32(0)) {
 			require(vm.emitterAddress == order.destAuthority, 'invalid emitter address');
+		} else if (order.destChainId == 1) {
+			require(vm.emitterAddress == solanaEmitter, 'invalid emitter address');
 		} else {
 			require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
 		}
@@ -502,6 +504,24 @@ contract MayanSwift {
 		return paused;
 	}
 
+	function setFeeCollector(address _feeCollector) public {
+		require(msg.sender == guardian, 'only guardian');
+		feeCollector = _feeCollector;
+	}
+
+	function getFeeCollector() public view returns(address) {
+		return feeCollector;
+	}
+
+	function setConsistencyLevel(uint8 _consistencyLevel) public {
+		require(msg.sender == guardian, 'only guardian');
+		consistencyLevel = _consistencyLevel;
+	}
+
+	function getConsistencyLevel() public view returns(uint8) {
+		return consistencyLevel;
+	}
+
 	function changeGuardian(address newGuardian) public {
 		require(msg.sender == guardian, 'only guardian');
 		nextGuardian = newGuardian;
@@ -514,14 +534,6 @@ contract MayanSwift {
 
 	function getOrder(bytes32 key) public view returns (Order memory) {
 		return orders[key];
-	}
-
-	function getHqChainId() public view returns (uint16) {
-		return hqChainId;
-	}
-
-	function getEmitterAddr() public view returns (bytes32) {
-		return hqAddr;
 	}
 
 	receive() external payable {}
