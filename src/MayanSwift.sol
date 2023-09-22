@@ -11,9 +11,9 @@ import "./libs/BytesLib.sol";
 contract MayanSwift {
 	event OrderCreated(bytes32 key);
 	event OrderFulfilled(bytes32 key);
-	event OrderUnlocked(bytes32 key);
-	event CancelInitiated(bytes32 key);
-	event CancelCompleted(bytes32 key);
+	event FulfillUnlocked(bytes32 key);
+	event OrderCanceled(bytes32 key);
+	event CanceledUnlocked(bytes32 key);
 
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
@@ -51,12 +51,12 @@ contract MayanSwift {
 	enum Status {
 		CREATED,
 		FULFILLED,
-		UNLOCKED,
-		CANCEL_INITIATED,
-		CANCEL_COMPLETED
+		FULFILLED_UNLOCKED,
+		CANCELED,
+		CANCELED_UNLOCKED
 	}
 
-	struct SwiftMsg {
+	struct UnlockMsg {
 		uint8 action;
 		bytes32 keyHash;
 		uint16 srcChain;
@@ -186,7 +186,7 @@ contract MayanSwift {
 
 		makePayments(fulfillMsg);
 
-		SwiftMsg memory unlockMsg = SwiftMsg({
+		UnlockMsg memory unlockMsg = UnlockMsg({
 			action: 2,
 			keyHash: fulfillMsg.keyHash,
 			srcChain: fulfillMsg.srcChain,
@@ -195,7 +195,7 @@ contract MayanSwift {
 			recipient: recepient
 		});
 
-		bytes memory encoded = encodeSwiftMsg(unlockMsg);
+		bytes memory encoded = encodeUnlockMsg(unlockMsg);
 
 		sequence = wormhole.publishMessage{
 			value : msg.value
@@ -209,7 +209,7 @@ contract MayanSwift {
 
 		require(valid, reason);
 
-		SwiftMsg memory swift = parseSwiftPayload(vm.payload);
+		UnlockMsg memory swift = parseUnlockPayload(vm.payload);
 		Order memory order = orders[swift.keyHash];
 
 		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
@@ -222,11 +222,16 @@ contract MayanSwift {
 			require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
 		}
 
-		require(order.status == Status.CREATED, 'order status not created');
 		require(swift.srcChain == wormhole.chainId(), 'invalid source chain');
-		require(swift.action == 2, 'wrong action');
-		
-		orders[swift.keyHash].status = Status.UNLOCKED;
+		require(order.status == Status.CREATED, 'order status not created');
+
+		if (swift.action == 2) {
+			order.status == Status.FULFILLED_UNLOCKED;
+		} else if (swift.action == 3) {
+			order.status == Status.CANCELED_UNLOCKED;
+		} else {
+			revert('invalid action');
+		}
 		
 		address recipient = truncateAddress(swift.recipient);
 		address tokenIn = truncateAddress(swift.tokenIn);
@@ -244,55 +249,14 @@ contract MayanSwift {
 			IERC20(tokenIn).safeTransfer(recipient, amountIn);
 		}
 		
-		emit OrderUnlocked(swift.keyHash);
+		if (swift.action == 2) {
+			emit FulfillUnlocked(swift.keyHash);
+		} else if (swift.action == 3) {
+			emit CanceledUnlocked(swift.keyHash);
+		}
 	}
 
-	function CompleteCancelOrder(bytes memory encodedVm) public {
-		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
-
-		require(valid, reason);
-
-		SwiftMsg memory swift = parseSwiftPayload(vm.payload);
-		Order memory order = orders[swift.keyHash];
-
-		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
-
-		if (order.destAuthority != bytes32(0)) {
-			require(vm.emitterAddress == order.destAuthority, 'invalid emitter address');
-		} else if (order.destChainId == 1) {
-			require(vm.emitterAddress == solanaEmitter, 'invalid emitter address');
-		} else {
-			require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
-		}
-
-		require(order.status == Status.CREATED, 'order status is not created');
-		require(swift.srcChain == wormhole.chainId(), 'invalid source chain');
-		require(swift.action == 3, 'wrong action');
-		
-		orders[swift.keyHash].status = Status.CANCEL_COMPLETED;
-		
-		address trader = truncateAddress(swift.recipient);
-		require(trader == msg.sender, 'invalid canceller');
-
-		address tokenIn = truncateAddress(swift.tokenIn);
-		uint8 decimals;
-		if (tokenIn == address(0)) {
-			decimals = 18;
-		} else {
-			decimals = decimalsOf(tokenIn);
-		}
-
-		uint256 amountIn = deNormalizeAmount(swift.amountIn, decimals);
-		if (tokenIn == address(0)) {
-			payable(trader).transfer(amountIn);
-		} else {
-			IERC20(tokenIn).safeTransfer(trader, amountIn);
-		}
-
-		emit CancelCompleted(swift.keyHash);
-	}
-
-	function InitiateCancelOrder(uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, bytes32 referrerAddr, bytes32 random) public payable returns (uint64 sequence) {
+	function cancelOrder(uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, bytes32 referrerAddr, bytes32 random) public payable returns (uint64 sequence) {
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(msg.sender))),
 			srcChainId: srcChainId,
@@ -311,9 +275,9 @@ contract MayanSwift {
 
 		require(order.status == Status.CREATED, 'invalid order status');
 
-		orders[keyHash].status = Status.CANCEL_INITIATED;
+		orders[keyHash].status = Status.CANCELED;
 
-		SwiftMsg memory cancelMsg = SwiftMsg({
+		UnlockMsg memory cancelMsg = UnlockMsg({
 			action: 3,
 			keyHash: keyHash,
 			srcChain: key.srcChainId,
@@ -322,13 +286,13 @@ contract MayanSwift {
 			recipient: key.trader
 		});
 
-		bytes memory encoded = encodeSwiftMsg(cancelMsg);
+		bytes memory encoded = encodeUnlockMsg(cancelMsg);
 
 		sequence = wormhole.publishMessage{
 			value : msg.value
 		}(0, encoded, consistencyLevel);
 
-		emit CancelInitiated(keyHash);
+		emit OrderCanceled(keyHash);
 	}
 
 	function makePayments(FulfillMsg memory fulfillMsg) internal {
@@ -379,7 +343,6 @@ contract MayanSwift {
 		fulfillMsg.action = encoded.toUint8(index);
 		index += 1;
 
-		// actions: 1 = fulfill, 2 = unlock 3 = init cancel
 		require(fulfillMsg.action == 1, 'invalid action');
 
 		fulfillMsg.keyHash = encoded.toBytes32(index);
@@ -421,25 +384,22 @@ contract MayanSwift {
 		require(encoded.length == index, 'invalid msg lenght');
 	}
 
-	function parseSwiftPayload(bytes memory encoded) public pure returns (SwiftMsg memory swiftMsg) {
+	function parseUnlockPayload(bytes memory encoded) public pure returns (UnlockMsg memory unlockMsg) {
 		uint index = 0;
 
-		swiftMsg.action = encoded.toUint8(index);
+		unlockMsg.action = encoded.toUint8(index);
 		index += 1;
 
-		// actions: 1 = fulfill, 2 = unlock 3 = init cancel
-		require(swiftMsg.action == 2 || swiftMsg.action == 3, 'invalid action');
-
-		swiftMsg.keyHash = encoded.toBytes32(index);
+		unlockMsg.keyHash = encoded.toBytes32(index);
 		index += 32;
 
-		swiftMsg.srcChain = encoded.toUint16(index);
+		unlockMsg.srcChain = encoded.toUint16(index);
 		index += 2;
 
-		swiftMsg.tokenIn = encoded.toBytes32(index);
+		unlockMsg.tokenIn = encoded.toBytes32(index);
 		index += 32;
 
-		swiftMsg.recipient = encoded.toBytes32(index);
+		unlockMsg.recipient = encoded.toBytes32(index);
 		index += 32;
 
 		require(encoded.length == index, 'invalid msg lenght');
@@ -461,13 +421,13 @@ contract MayanSwift {
 		);
 	}
 
-	function encodeSwiftMsg(SwiftMsg memory swiftMsg) internal pure returns (bytes memory encoded) {
+	function encodeUnlockMsg(UnlockMsg memory unlockMsg) internal pure returns (bytes memory encoded) {
 		encoded = abi.encodePacked(
-			swiftMsg.action,
-			swiftMsg.keyHash,
-			swiftMsg.srcChain,
-			swiftMsg.tokenIn,
-			swiftMsg.recipient
+			unlockMsg.action,
+			unlockMsg.keyHash,
+			unlockMsg.srcChain,
+			unlockMsg.tokenIn,
+			unlockMsg.recipient
 		);
 	}
 
