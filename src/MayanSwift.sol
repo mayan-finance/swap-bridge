@@ -73,6 +73,7 @@ contract MayanSwift {
 		bytes32 driver;
 		bytes32 tokenOut;
 		uint64 amountPromised;
+		uint64 gasDrop;
 		bytes32 referrerAddr;
 		uint8 referrerBps;
 		uint8 mayanBps;
@@ -98,6 +99,9 @@ contract MayanSwift {
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
 		require(normlizedAmountIn > 0, 'small amount in');
+		if (tokenOut == bytes32(0)) {
+			require(gasDrop == 0, 'gas drop not supported');
+		}
 
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(msg.sender))),
@@ -114,6 +118,7 @@ contract MayanSwift {
 		});
 		keyHash = keccak256(encodeKey(key));
 
+		require(destChainId != wormhole.chainId(), 'same src and dest chain');
 		require(destChainId > 0, 'invalid dest chain id');
 		require(orders[keyHash].destChainId == 0, 'duplicate key');
 
@@ -135,6 +140,9 @@ contract MayanSwift {
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
 		require(normlizedAmountIn > 0, 'small amount in');
+		if (tokenOut == bytes32(0)) {
+			require(gasDrop == 0, 'gas drop not supported');
+		}
 
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(msg.sender))),
@@ -151,6 +159,7 @@ contract MayanSwift {
 		});
 		keyHash = keccak256(encodeKey(key));
 
+		require(destChainId != wormhole.chainId(), 'same src and dest chain');
 		require(destChainId > 0, 'invalid dest chain id');
 		require(orders[keyHash].destChainId == 0, 'duplicate key');
 
@@ -319,6 +328,7 @@ contract MayanSwift {
 
 		address destAddr = truncateAddress(fulfillMsg.destAddr);
 		if (tokenOut == address(0)) {
+			require(msg.value == amountPromised, 'invalid amount value');
 			if (amountReferrer > 0) {
 				payable(referrerAddr).transfer(amountReferrer);
 			}
@@ -332,6 +342,11 @@ contract MayanSwift {
 			}
 			if (amountMayan > 0) {
 				IERC20(tokenOut).safeTransferFrom(msg.sender, feeCollector, amountMayan);
+			}
+			if (fulfillMsg.gasDrop > 0) {
+				uint256 gasDrop = deNormalizeAmount(fulfillMsg.gasDrop, 18);
+				require(msg.value == gasDrop, 'invalid gas drop value');
+				payable(destAddr).transfer(gasDrop);
 			}
 			IERC20(tokenOut).safeTransferFrom(msg.sender, destAddr, amountPromised - amountReferrer - amountMayan);
 		}
