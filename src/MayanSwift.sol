@@ -414,6 +414,9 @@ contract MayanSwift {
 		unlockMsg.tokenIn = encoded.toBytes32(index);
 		index += 32;
 
+		unlockMsg.amountIn = encoded.toUint64(index);
+		index += 8;
+
 		unlockMsg.recipient = encoded.toBytes32(index);
 		index += 32;
 
