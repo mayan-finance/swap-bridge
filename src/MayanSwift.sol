@@ -265,17 +265,17 @@ contract MayanSwift {
 		}
 	}
 
-	function cancelOrder(uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, bytes32 referrerAddr, bytes32 random) public payable returns (uint64 sequence) {
+	function cancelOrder(bytes32 trader, uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 referrerAddr, bytes32 random) public payable returns (uint64 sequence) {
 		Key memory key = Key({
-			trader: bytes32(uint256(uint160(msg.sender))),
+			trader: trader,
 			srcChainId: srcChainId,
 			tokenIn: tokenIn,
 			amountIn: amountIn,
 			tokenOut: tokenOut,
 			minAmountOut: minAmountOut,
 			gasDrop: gasDrop,
-			destAddr: destAddr,
-			destChainId: destChainId,
+			destAddr: bytes32(uint256(uint160(msg.sender))),
+			destChainId: wormhole.chainId(),
 			referrerAddr: referrerAddr,
 			random: random
 		});
@@ -442,6 +442,7 @@ contract MayanSwift {
 			unlockMsg.keyHash,
 			unlockMsg.srcChain,
 			unlockMsg.tokenIn,
+			unlockMsg.amountIn,
 			unlockMsg.recipient
 		);
 	}
