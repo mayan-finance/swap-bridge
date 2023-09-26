@@ -11,9 +11,9 @@ import "./libs/BytesLib.sol";
 contract MayanSwift {
 	event OrderCreated(bytes32 key);
 	event OrderFulfilled(bytes32 key);
-	event FulfillUnlocked(bytes32 key);
+	event OrderUnlocked(bytes32 key);
 	event OrderCanceled(bytes32 key);
-	event CanceledUnlocked(bytes32 key);
+	event OrderRefunded(bytes32 key);
 
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
@@ -51,9 +51,9 @@ contract MayanSwift {
 	enum Status {
 		CREATED,
 		FULFILLED,
-		FULFILLED_UNLOCKED,
+		UNLOCKED,
 		CANCELED,
-		CANCELED_UNLOCKED
+		REFUNDED
 	}
 
 	struct UnlockMsg {
@@ -118,7 +118,7 @@ contract MayanSwift {
 		});
 		keyHash = keccak256(encodeKey(key));
 
-		require(destChainId != wormhole.chainId(), 'same src and dest chain');
+		require(destChainId != wormhole.chainId(), 'same src and dest chains');
 		require(destChainId > 0, 'invalid dest chain id');
 		require(orders[keyHash].destChainId == 0, 'duplicate key');
 
@@ -213,7 +213,7 @@ contract MayanSwift {
 		emit OrderFulfilled(fulfillMsg.keyHash);
 	}
 
-	function unlockOrder(bytes memory encodedVm) public {
+	function releaseOrder(bytes memory encodedVm) public {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
@@ -235,9 +235,9 @@ contract MayanSwift {
 		require(order.status == Status.CREATED, 'order status not created');
 
 		if (swift.action == 2) {
-			order.status == Status.FULFILLED_UNLOCKED;
+			order.status == Status.UNLOCKED;
 		} else if (swift.action == 3) {
-			order.status == Status.CANCELED_UNLOCKED;
+			order.status == Status.REFUNDED;
 		} else {
 			revert('invalid action');
 		}
@@ -259,9 +259,9 @@ contract MayanSwift {
 		}
 		
 		if (swift.action == 2) {
-			emit FulfillUnlocked(swift.keyHash);
+			emit OrderUnlocked(swift.keyHash);
 		} else if (swift.action == 3) {
-			emit CanceledUnlocked(swift.keyHash);
+			emit OrderRefunded(swift.keyHash);
 		}
 	}
 
