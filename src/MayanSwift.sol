@@ -59,7 +59,7 @@ contract MayanSwift {
 	struct UnlockMsg {
 		uint8 action;
 		bytes32 keyHash;
-		uint16 srcChain;
+		uint16 srcChainId;
 		bytes32 tokenIn;
 		uint64 amountIn;
 		bytes32 recipient;
@@ -77,7 +77,7 @@ contract MayanSwift {
 		bytes32 referrerAddr;
 		uint8 referrerBps;
 		uint8 mayanBps;
-		uint16 srcChain;
+		uint16 srcChainId;
 		bytes32 tokenIn;
 		uint64 amountIn;
 	}
@@ -198,7 +198,7 @@ contract MayanSwift {
 		UnlockMsg memory unlockMsg = UnlockMsg({
 			action: 2,
 			keyHash: fulfillMsg.keyHash,
-			srcChain: fulfillMsg.srcChain,
+			srcChainId: fulfillMsg.srcChainId,
 			tokenIn: fulfillMsg.tokenIn,
 			amountIn: fulfillMsg.amountIn,
 			recipient: recepient
@@ -231,7 +231,7 @@ contract MayanSwift {
 			require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
 		}
 
-		require(swift.srcChain == wormhole.chainId(), 'invalid source chain');
+		require(swift.srcChainId == wormhole.chainId(), 'invalid source chain');
 		require(order.status == Status.CREATED, 'order status not created');
 
 		if (swift.action == 2) {
@@ -289,7 +289,7 @@ contract MayanSwift {
 		UnlockMsg memory cancelMsg = UnlockMsg({
 			action: 3,
 			keyHash: keyHash,
-			srcChain: key.srcChainId,
+			srcChainId: key.srcChainId,
 			tokenIn: key.tokenIn,
 			amountIn: key.amountIn,
 			recipient: key.trader
@@ -378,6 +378,9 @@ contract MayanSwift {
 		fulfillMsg.amountPromised = encoded.toUint64(index);
 		index += 8;
 
+		fulfillMsg.gasDrop = encoded.toUint64(index);
+		index += 8;
+
 		fulfillMsg.referrerAddr = encoded.toBytes32(index);
 		index += 32;
 
@@ -387,14 +390,14 @@ contract MayanSwift {
 		fulfillMsg.mayanBps = encoded.toUint8(index);
 		index += 1;
 
-		fulfillMsg.srcChain = encoded.toUint16(index);
+		fulfillMsg.srcChainId = encoded.toUint16(index);
 		index += 2;
 
 		fulfillMsg.tokenIn = encoded.toBytes32(index);
 		index += 32;
 
 		fulfillMsg.amountIn = encoded.toUint64(index);
-		index += 32;
+		index += 8;
 
 		require(encoded.length == index, 'invalid msg lenght');
 	}
@@ -408,7 +411,7 @@ contract MayanSwift {
 		unlockMsg.keyHash = encoded.toBytes32(index);
 		index += 32;
 
-		unlockMsg.srcChain = encoded.toUint16(index);
+		unlockMsg.srcChainId = encoded.toUint16(index);
 		index += 2;
 
 		unlockMsg.tokenIn = encoded.toBytes32(index);
@@ -443,7 +446,7 @@ contract MayanSwift {
 		encoded = abi.encodePacked(
 			unlockMsg.action,
 			unlockMsg.keyHash,
-			unlockMsg.srcChain,
+			unlockMsg.srcChainId,
 			unlockMsg.tokenIn,
 			unlockMsg.amountIn,
 			unlockMsg.recipient
