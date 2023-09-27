@@ -207,7 +207,7 @@ contract MayanSwift {
 		bytes memory encoded = encodeUnlockMsg(unlockMsg);
 
 		sequence = wormhole.publishMessage{
-			value : msg.value
+			value : wormhole.messageFee()
 		}(0, encoded, consistencyLevel);
 
 		emit OrderFulfilled(fulfillMsg.keyHash);
@@ -313,7 +313,7 @@ contract MayanSwift {
 			decimals = decimalsOf(tokenOut);
 		}
 
-		uint256 amountPromised = deNormalizeAmount(fulfillMsg.amountIn, decimals);
+		uint256 amountPromised = deNormalizeAmount(fulfillMsg.amountPromised, decimals);
 		address referrerAddr = truncateAddress(fulfillMsg.referrerAddr);
 		
 		uint256 amountReferrer = 0;
@@ -327,8 +327,9 @@ contract MayanSwift {
 		}
 
 		address destAddr = truncateAddress(fulfillMsg.destAddr);
+		uint256 wormholeFee = wormhole.messageFee();
 		if (tokenOut == address(0)) {
-			require(msg.value == amountPromised, 'invalid amount value');
+			require(msg.value == amountPromised + wormholeFee, 'invalid amount value');
 			if (amountReferrer > 0) {
 				payable(referrerAddr).transfer(amountReferrer);
 			}
@@ -337,16 +338,19 @@ contract MayanSwift {
 			}
 			payable(destAddr).transfer(amountPromised - amountReferrer - amountMayan);
 		} else {
+			if (fulfillMsg.gasDrop > 0) {
+				uint256 gasDrop = deNormalizeAmount(fulfillMsg.gasDrop, 18);
+				require(msg.value == gasDrop + wormholeFee, 'invalid gas drop value');
+				payable(destAddr).transfer(gasDrop);
+			} else {
+				require(msg.value == wormholeFee, 'invalid bridge fee value');
+			}
+			
 			if (amountReferrer > 0) {
 				IERC20(tokenOut).safeTransferFrom(msg.sender, referrerAddr, amountReferrer);
 			}
 			if (amountMayan > 0) {
 				IERC20(tokenOut).safeTransferFrom(msg.sender, feeCollector, amountMayan);
-			}
-			if (fulfillMsg.gasDrop > 0) {
-				uint256 gasDrop = deNormalizeAmount(fulfillMsg.gasDrop, 18);
-				require(msg.value == gasDrop, 'invalid gas drop value');
-				payable(destAddr).transfer(gasDrop);
 			}
 			IERC20(tokenOut).safeTransferFrom(msg.sender, destAddr, amountPromised - amountReferrer - amountMayan);
 		}
