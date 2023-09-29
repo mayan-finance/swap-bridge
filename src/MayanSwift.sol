@@ -235,9 +235,9 @@ contract MayanSwift {
 		require(order.status == Status.CREATED, 'order status not created');
 
 		if (swift.action == 2) {
-			order.status == Status.UNLOCKED;
+			order.status = Status.UNLOCKED;
 		} else if (swift.action == 3) {
-			order.status == Status.REFUNDED;
+			order.status = Status.REFUNDED;
 		} else {
 			revert('invalid action');
 		}
@@ -265,7 +265,7 @@ contract MayanSwift {
 		}
 	}
 
-	function cancelOrder(bytes32 trader, uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 referrerAddr, bytes32 random) public payable returns (uint64 sequence) {
+	function cancelOrder(bytes32 trader, uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 referrerAddr, bytes32 random, bytes32 recipient) public payable returns (uint64 sequence) {
 		Key memory key = Key({
 			trader: trader,
 			srcChainId: srcChainId,
@@ -292,7 +292,7 @@ contract MayanSwift {
 			srcChainId: key.srcChainId,
 			tokenIn: key.tokenIn,
 			amountIn: key.amountIn,
-			recipient: key.trader
+			recipient: recipient
 		});
 
 		bytes memory encoded = encodeUnlockMsg(cancelMsg);
