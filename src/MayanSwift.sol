@@ -188,10 +188,8 @@ contract MayanSwift {
 		require(fulfillMsg.destChainId == wormhole.chainId(), 'wrong chain id');
 		require(truncateAddress(fulfillMsg.driver) == msg.sender, 'invalid driver');
 
-		Order memory order = orders[fulfillMsg.keyHash];
-		require(order.status == Status.CREATED, 'invalid order status');
-		
-		order.status = Status.FULFILLED;
+		require(orders[fulfillMsg.keyHash].status == Status.CREATED, 'invalid order status');
+		orders[fulfillMsg.keyHash].status = Status.FULFILLED;
 
 		makePayments(fulfillMsg);
 
@@ -232,12 +230,13 @@ contract MayanSwift {
 		}
 
 		require(swift.srcChainId == wormhole.chainId(), 'invalid source chain');
-		require(order.status == Status.CREATED, 'order status not created');
+		require(order.destChainId > 0, 'order not exists');
+		require(order.status == Status.CREATED, 'order status is not created');
 
 		if (swift.action == 2) {
-			order.status = Status.UNLOCKED;
+			orders[swift.keyHash].status = Status.UNLOCKED;
 		} else if (swift.action == 3) {
-			order.status = Status.REFUNDED;
+			orders[swift.keyHash].status = Status.REFUNDED;
 		} else {
 			revert('invalid action');
 		}
@@ -283,7 +282,6 @@ contract MayanSwift {
 		Order memory order = orders[keyHash];
 
 		require(order.status == Status.CREATED, 'invalid order status');
-
 		orders[keyHash].status = Status.CANCELED;
 
 		UnlockMsg memory cancelMsg = UnlockMsg({
