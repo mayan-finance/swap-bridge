@@ -19,14 +19,16 @@ contract MayanSwift {
 	using BytesLib for bytes;
 
 	IWormhole wormhole;
-	address feeCollector;
-	uint16 auctionChainId;
-	bytes32 auctionAddr;
-	bytes32 solanaEmitter;
-	uint8 consistencyLevel;
-	address guardian;
-	address nextGuardian;
-	bool paused;
+	address public feeCollector;
+	uint16 public auctionChainId;
+	bytes32 public auctionAddr;
+	bytes32 public solanaEmitter;
+	uint8 public consistencyLevel;
+	address public guardian;
+	address public nextGuardian;
+	bool public paused;
+
+	mapping(bytes32 => Order) private orders;
 
 	struct Order {
 		bytes32 destAuthority;
@@ -91,8 +93,6 @@ contract MayanSwift {
 		solanaEmitter = _solanaEmitter;
 		consistencyLevel = _consistencyLevel;
 	}
-
-	mapping(bytes32 => Order) orders;
 
 	function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint8 destChainId, bytes32 referrerAddr, bytes32 random, bytes32 destAuthority) public payable returns (bytes32 keyHash) {
 		require(paused == false, 'contract is paused');
@@ -217,21 +217,14 @@ contract MayanSwift {
 		require(valid, reason);
 
 		UnlockMsg memory swift = parseUnlockPayload(vm.payload);
-		Order memory order = orders[swift.keyHash];
+		Order memory order = getOrder(swift.keyHash);
 
 		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
-
-		if (order.destAuthority != bytes32(0)) {
-			require(vm.emitterAddress == order.destAuthority, 'invalid emitter address');
-		} else if (order.destChainId == 1) {
-			require(vm.emitterAddress == solanaEmitter, 'invalid emitter address');
-		} else {
-			require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
-		}
+		require(vm.emitterAddress == order.destAuthority, 'invalid emitter address');
 
 		require(swift.srcChainId == wormhole.chainId(), 'invalid source chain');
 		require(order.destChainId > 0, 'order not exists');
-		require(order.status == Status.CREATED, 'order status is not created');
+		require(order.status == Status.CREATED, 'order is not created');
 
 		if (swift.action == 2) {
 			orders[swift.keyHash].status = Status.UNLOCKED;
@@ -484,26 +477,14 @@ contract MayanSwift {
 		paused = _pause;
 	}
 
-	function isPaused() public view returns(bool) {
-		return paused;
-	}
-
 	function setFeeCollector(address _feeCollector) public {
 		require(msg.sender == guardian, 'only guardian');
 		feeCollector = _feeCollector;
 	}
 
-	function getFeeCollector() public view returns(address) {
-		return feeCollector;
-	}
-
 	function setConsistencyLevel(uint8 _consistencyLevel) public {
 		require(msg.sender == guardian, 'only guardian');
 		consistencyLevel = _consistencyLevel;
-	}
-
-	function getConsistencyLevel() public view returns(uint8) {
-		return consistencyLevel;
 	}
 
 	function changeGuardian(address newGuardian) public {
@@ -516,8 +497,15 @@ contract MayanSwift {
 		guardian = nextGuardian;
 	}
 
-	function getOrder(bytes32 key) public view returns (Order memory) {
-		return orders[key];
+	function getOrder(bytes32 key) public view returns (Order memory order) {
+		order = orders[key];
+		if (order.destAuthority == bytes32(0)) {
+			if (order.destChainId == 1) {
+				order.destAuthority = solanaEmitter;
+			} else {
+				order.destAuthority = bytes32(uint256(uint160(address(this))));
+			}
+		}
 	}
 
 	receive() external payable {}
