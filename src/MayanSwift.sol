@@ -31,7 +31,7 @@ contract MayanSwift {
 	mapping(bytes32 => Order) private orders;
 
 	struct Order {
-		bytes32 destAuthority;
+		bytes32 destEmitter;
 		uint16 destChainId;
 		Status status;
 	}
@@ -94,7 +94,7 @@ contract MayanSwift {
 		consistencyLevel = _consistencyLevel;
 	}
 
-	function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint8 destChainId, bytes32 referrerAddr, bytes32 random, bytes32 destAuthority) public payable returns (bytes32 keyHash) {
+	function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint8 destChainId, bytes32 referrerAddr, bytes32 random, bytes32 destEmitter) public payable returns (bytes32 keyHash) {
 		require(paused == false, 'contract is paused');
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
@@ -124,14 +124,14 @@ contract MayanSwift {
 
 		orders[keyHash].destChainId = destChainId;
 		orders[keyHash].status = Status.CREATED;
-		if (destAuthority != bytes32(0)) {
-			orders[keyHash].destAuthority = destAuthority;
+		if (destEmitter != bytes32(0)) {
+			orders[keyHash].destEmitter = destEmitter;
 		}
 
 		emit OrderCreated(keyHash);
 	}
 
-	function createOrderWithToken(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, address tokenIn, uint256 amountIn, bytes32 referrerAddr, bytes32 random, bytes32 destAuthority) public returns (bytes32 keyHash) {
+	function createOrderWithToken(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, address tokenIn, uint256 amountIn, bytes32 referrerAddr, bytes32 random, bytes32 destEmitter) public returns (bytes32 keyHash) {
 		require(paused == false, 'contract is paused');
 
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
@@ -164,13 +164,13 @@ contract MayanSwift {
 		require(orders[keyHash].destChainId == 0, 'duplicate key');
 
 		orders[keyHash] = Order({
-			destAuthority: destAuthority,
+			destEmitter: destEmitter,
 			destChainId: destChainId,
 			status: Status.CREATED
 		});
 
-		if (destAuthority != bytes32(0)) {
-			orders[keyHash].destAuthority = destAuthority;
+		if (destEmitter != bytes32(0)) {
+			orders[keyHash].destEmitter = destEmitter;
 		}
 
 		emit OrderCreated(keyHash);
@@ -220,7 +220,7 @@ contract MayanSwift {
 		Order memory order = getOrder(swift.keyHash);
 
 		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
-		require(vm.emitterAddress == order.destAuthority, 'invalid emitter address');
+		require(vm.emitterAddress == order.destEmitter, 'invalid emitter address');
 
 		require(swift.srcChainId == wormhole.chainId(), 'invalid source chain');
 		require(order.destChainId > 0, 'order not exists');
@@ -499,11 +499,11 @@ contract MayanSwift {
 
 	function getOrder(bytes32 key) public view returns (Order memory order) {
 		order = orders[key];
-		if (order.destAuthority == bytes32(0)) {
+		if (order.destEmitter == bytes32(0)) {
 			if (order.destChainId == 1) {
-				order.destAuthority = solanaEmitter;
+				order.destEmitter = solanaEmitter;
 			} else {
-				order.destAuthority = bytes32(uint256(uint160(address(this))));
+				order.destEmitter = bytes32(uint256(uint160(address(this))));
 			}
 		}
 	}
