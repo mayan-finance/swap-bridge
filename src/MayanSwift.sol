@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache 2
+// SPDX-License-Identifier: MIT
 
 pragma solidity ^0.8.0;
 
@@ -120,7 +120,7 @@ contract MayanSwift {
 
 		require(destChainId != wormhole.chainId(), 'same src and dest chains');
 		require(destChainId > 0, 'invalid dest chain id');
-		require(orders[orderHash].destChainId == 0, 'duplicate key');
+		require(orders[orderHash].destChainId == 0, 'duplicate order hash');
 
 		orders[orderHash].destChainId = destChainId;
 		orders[orderHash].status = Status.CREATED;
