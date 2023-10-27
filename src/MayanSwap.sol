@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./interfaces/ITokenBridge.sol";
 import "./interfaces/IWormhole.sol";
 
-import "./MayanStructs.sol";
+import { MayanStructs, RelayerFees, Recepient, Criteria } from "./MayanStructs.sol";
 import "./libs/BytesLib.sol";
 
 contract MayanSwap {
@@ -23,31 +23,6 @@ contract MayanSwap {
 	bool paused;
 	IWETH weth;
 	uint16 homeChainId;
-
-	struct RelayerFees {
-		uint64 swapFee;
-		uint64 redeemFee;
-		uint64 refundFee;
-	}
-
-	struct Criteria {
-		uint256 transferDeadline;
-		uint64 swapDeadline;
-		uint64 amountOutMin;
-		bool unwrap;
-		uint64 gasDrop;
-		bytes customPayload;
-	}
-
-	struct Recepient {
-		bytes32 mayanAddr;
-		uint16 mayanChainId;
-		bytes32 auctionAddr;
-		bytes32 destAddr;
-		uint16 destChainId;
-		bytes32 referrer;
-		bytes32 refundAddr;
-	}
 
 	constructor(address _tokenBridge, address _weth) {
 		tokenBridge = ITokenBridge(_tokenBridge);
