@@ -94,7 +94,7 @@ contract MayanSwift {
 		consistencyLevel = _consistencyLevel;
 	}
 
-	function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint8 destChainId, bytes32 referrerAddr, bytes32 random, bytes32 destEmitter) public payable returns (bytes32 orderHash) {
+	function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, bytes32 referrerAddr, bytes32 random, bytes32 destEmitter) public payable returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
