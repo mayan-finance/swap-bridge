@@ -257,7 +257,7 @@ contract MayanSwift {
 		}
 	}
 
-	function cancelOrder(bytes32 trader, uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 referrerAddr, bytes32 random, bytes32 recipient) public payable returns (uint64 sequence) {
+	function cancelOrder(bytes32 trader, uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 referrerAddr, bytes32 random) public payable returns (uint64 sequence) {
 		Key memory key = Key({
 			trader: trader,
 			srcChainId: srcChainId,
@@ -283,7 +283,7 @@ contract MayanSwift {
 			srcChainId: key.srcChainId,
 			tokenIn: key.tokenIn,
 			amountIn: key.amountIn,
-			recipient: recipient
+			recipient: trader
 		});
 
 		bytes memory encoded = encodeUnlockMsg(cancelMsg);
