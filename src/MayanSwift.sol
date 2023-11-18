@@ -497,8 +497,8 @@ contract MayanSwift {
 		guardian = nextGuardian;
 	}
 
-	function getOrder(bytes32 key) public view returns (Order memory order) {
-		order = orders[key];
+	function getOrder(bytes32 orderHash) public view returns (Order memory order) {
+		order = orders[orderHash];
 		if (order.destEmitter == bytes32(0)) {
 			if (order.destChainId == 1) {
 				order.destEmitter = solanaEmitter;
