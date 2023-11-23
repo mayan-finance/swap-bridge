@@ -1,7 +1,6 @@
 import { ethers } from "hardhat";
 // @ts-ignore
 import { base58_to_binary } from "base58-js";
-import { PublicKey } from "@solana/web3.js";
 
 async function main(swiftAddr: string, destAuth: string) {
 	const Swift = await ethers.getContractFactory("MayanSwift");
@@ -33,7 +32,7 @@ function ethToBytes32(address: string) {
 }
 
 function base58ToBytes32(address: string) {
-	return '0x' + Buffer.from(new PublicKey(address).toBytes()).toString('hex');
+	return '0x' + Buffer.from(base58_to_binary(address)).toString('hex');
 }
 
 main(process.env.SWIFT_ADDR, process.env.DEST_AUTH).catch((error) => {
