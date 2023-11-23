@@ -9,7 +9,7 @@ async function main(swiftAddr: string) {
 	// console.log({ order });
 
 	const vaa = "";
-	const tx = await swift.releaseOrder(vaa);
+	const tx = await swift.unlockOrder(vaa);
 	const receipt = await tx.wait();
 	console.log({ receipt });
 }

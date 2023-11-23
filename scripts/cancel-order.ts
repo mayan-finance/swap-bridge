@@ -9,7 +9,7 @@ async function main(swiftAddr: string, random: string) {
 	console.log({ inputRandom: random });
 
 	// cancelOrder(bytes32 trader, uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 referrerAddr, bytes32 random)
-	const tx = await swift.cancelOrder(addressToBytes32(owner.address), 5, HashZero, 736, HashZero, 425, 0, HashZero, random);
+	const tx = await swift.cancelOrder("0xc81ba38362db3567aaf37cb0e8ff25e91c669c2f17fbf5c872f847c8c1a7bfbb", 1, "0xc6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d61", 555, addressToBytes32("0xe9e7cea3dedca5984780bafc599bd69add087d56"), 222, 15, HashZero, random, "0x6290f2ee62f3c4618531434626d4c723af5f0fa67069d49530ab83e536b734d0");
 	const receipt = await tx.wait();
 	console.log({ receipt });
 }
