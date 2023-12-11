@@ -3,9 +3,11 @@
 pragma solidity ^0.8.0;
 
 import "./IMessageTransmitter.sol";
+import "./ITokenMinter.sol";
 
 interface ITokenMessenger {
     function localMessageTransmitter() external view returns (IMessageTransmitter);
+    function localMinter() external view returns (ITokenMinter);
 
     function depositForBurnWithCaller(
         uint256 amount,
