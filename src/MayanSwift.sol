@@ -4,11 +4,12 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/IWormhole.sol";
 import "./interfaces/IWETH.sol";
 import "./libs/BytesLib.sol";
 
-contract MayanSwift {
+contract MayanSwift is ReentrancyGuard {
 	event OrderCreated(bytes32 key);
 	event OrderFulfilled(bytes32 key);
 	event OrderUnlocked(bytes32 key);
@@ -19,6 +20,7 @@ contract MayanSwift {
 	using BytesLib for bytes;
 
 	IWormhole wormhole;
+	uint8 public defaultProtocolBps;
 	address public feeCollector;
 	uint16 public auctionChainId;
 	bytes32 public auctionAddr;
@@ -48,6 +50,7 @@ contract MayanSwift {
 		uint16 destChainId;
 		bytes32 referrerAddr;
 		uint8 referrerBps;
+		uint8 protocolBps;
 		uint8 auctionMode;
 		bytes32 random;
 	}
@@ -80,7 +83,7 @@ contract MayanSwift {
 		uint64 gasDrop;
 		bytes32 referrerAddr;
 		uint8 referrerBps;
-		uint8 mayanBps;
+		uint8 protocolBps;
 		uint16 srcChainId;
 		bytes32 tokenIn;
 		uint64 amountIn;
@@ -92,7 +95,14 @@ contract MayanSwift {
 		uint8 auctionMode;
 	}
 
-	constructor(address _wormhole, address _feeCollector, uint16 _auctionChainId, bytes32 _auctionAddr, bytes32 _solanaEmitter, uint8 _consistencyLevel) {
+	constructor(
+		address _wormhole,
+		address _feeCollector,
+		uint16 _auctionChainId,
+		bytes32 _auctionAddr,
+		bytes32 _solanaEmitter,
+		uint8 _consistencyLevel
+	) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
 		feeCollector = _feeCollector;
@@ -102,11 +112,22 @@ contract MayanSwift {
 		consistencyLevel = _consistencyLevel;
 	}
 
-	function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, Criteria memory criteria, bytes32 random, bytes32 destEmitter) public payable returns (bytes32 orderHash) {
+	function createOrderWithEth(
+		bytes32 tokenOut,
+		uint64 minAmountOut,
+		uint64 gasDrop,
+		bytes32 destAddr,
+		uint16 destChainId,
+		Criteria memory criteria,
+		bytes32 random,
+		bytes32 destEmitter
+	) nonReentrant public payable returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
+		require(criteria.auctionMode > 0, 'invalid auction mode');
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
 		require(normlizedAmountIn > 0, 'small amount in');
+
 		if (tokenOut == bytes32(0)) {
 			require(gasDrop == 0, 'gas drop not supported');
 		}
@@ -123,6 +144,7 @@ contract MayanSwift {
 			destChainId: destChainId,
 			referrerAddr: criteria.referrerAddr,
 			referrerBps: criteria.referrerBps,
+			protocolBps: defaultProtocolBps,
 			auctionMode: criteria.auctionMode,
 			random: random
 		});
@@ -141,8 +163,20 @@ contract MayanSwift {
 		emit OrderCreated(orderHash);
 	}
 
-	function createOrderWithToken(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, address tokenIn, uint256 amountIn, Criteria memory criteria, bytes32 random, bytes32 destEmitter) public returns (bytes32 orderHash) {
+	function createOrderWithToken(
+		bytes32 tokenOut,
+		uint64 minAmountOut,
+		uint64 gasDrop,
+		bytes32 destAddr,
+		uint16 destChainId,
+		address tokenIn,
+		uint256 amountIn,
+		Criteria memory criteria,
+		bytes32 random,
+		bytes32 destEmitter
+	) nonReentrant public returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
+		require(criteria.auctionMode > 0, 'invalid auction mode');
 
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
@@ -166,6 +200,7 @@ contract MayanSwift {
 			destChainId: destChainId,
 			referrerAddr: criteria.referrerAddr,
 			referrerBps: criteria.referrerBps,
+			protocolBps: defaultProtocolBps,
 			auctionMode: criteria.auctionMode,
 			random: random
 		});
@@ -188,7 +223,7 @@ contract MayanSwift {
 		emit OrderCreated(orderHash);
 	}
 
-	function fulfillOrder(bytes memory encodedVm, bytes32 recepient) public payable returns (uint64 sequence) {
+	function fulfillOrder(bytes memory encodedVm, bytes32 recepient) nonReentrant public payable returns (uint64 sequence) {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
@@ -203,7 +238,15 @@ contract MayanSwift {
 		require(orders[fulfillMsg.orderHash].status == Status.CREATED, 'invalid order status');
 		orders[fulfillMsg.orderHash].status = Status.FULFILLED;
 
-		makePayments(fulfillMsg);
+		makePayments(
+			fulfillMsg.destAddr,
+			fulfillMsg.tokenOut,
+			fulfillMsg.amountPromised,
+			fulfillMsg.gasDrop,
+			fulfillMsg.referrerAddr,
+			fulfillMsg.referrerBps,
+			fulfillMsg.protocolBps
+		);
 
 		UnlockMsg memory unlockMsg = UnlockMsg({
 			action: 2,
@@ -223,7 +266,71 @@ contract MayanSwift {
 		emit OrderFulfilled(fulfillMsg.orderHash);
 	}
 
-	function unlockOrder(bytes memory encodedVm) public {
+	function fulfillSimple(bytes32 orderHash,
+		bytes32 trader,
+		uint16 srcChainId,
+		bytes32 tokenIn,
+		uint64 amountIn,
+		bytes32 tokenOut,
+		uint64 amountOut,
+		uint64 gasDrop,
+		bytes32 destAddr,
+		Criteria memory criteria,
+		uint8 protocolBps,
+		bytes32 random
+	) public nonReentrant payable returns (uint64 sequence) {
+		Key memory key = Key({
+			trader: trader,
+			srcChainId: srcChainId,
+			tokenIn: tokenIn,
+			amountIn: amountIn,
+			tokenOut: tokenOut,
+			minAmountOut: amountOut,
+			gasDrop: gasDrop,
+			destAddr: destAddr,
+			destChainId: wormhole.chainId(),
+			referrerAddr: criteria.referrerAddr,
+			referrerBps: criteria.referrerBps,
+			protocolBps: protocolBps,
+			auctionMode: criteria.auctionMode,
+			random: random
+		});
+		bytes32 computedOrderHash = keccak256(encodeKey(key));
+
+		require(computedOrderHash == orderHash, 'invalid order hash');
+
+		require(orders[computedOrderHash].status == Status.CREATED, 'invalid order status');
+		orders[computedOrderHash].status = Status.FULFILLED;
+
+		makePayments(
+			destAddr,
+			tokenOut,
+			amountOut,
+			gasDrop,
+			criteria.referrerAddr,
+			criteria.referrerBps,
+			protocolBps
+		);
+
+		UnlockMsg memory unlockMsg = UnlockMsg({
+			action: 2,
+			orderHash: computedOrderHash,
+			srcChainId: key.srcChainId,
+			tokenIn: key.tokenIn,
+			amountIn: key.amountIn,
+			recipient: key.trader
+		});
+
+		bytes memory encoded = encodeUnlockMsg(unlockMsg);
+
+		sequence = wormhole.publishMessage{
+			value : wormhole.messageFee()
+		}(0, encoded, consistencyLevel);
+
+		emit OrderFulfilled(computedOrderHash);
+	}
+
+	function unlockOrder(bytes memory encodedVm) nonReentrant public {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
@@ -269,7 +376,17 @@ contract MayanSwift {
 		}
 	}
 
-	function cancelOrder(bytes32 trader, uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, Criteria memory criteria, bytes32 random) public payable returns (uint64 sequence) {
+	function cancelOrder(
+		bytes32 trader,
+		uint16 srcChainId,
+		bytes32 tokenIn,
+		uint64 amountIn,
+		bytes32 tokenOut,
+		uint64 minAmountOut,
+		uint64 gasDrop,
+		Criteria memory criteria,
+		bytes32 random
+	) public nonReentrant payable returns (uint64 sequence) {
 		Key memory key = Key({
 			trader: trader,
 			srcChainId: srcChainId,
@@ -282,6 +399,7 @@ contract MayanSwift {
 			destChainId: wormhole.chainId(),
 			referrerAddr: criteria.referrerAddr,
 			referrerBps: criteria.referrerBps,
+			protocolBps: defaultProtocolBps,
 			auctionMode: criteria.auctionMode,
 			random: random
 		});
@@ -309,8 +427,8 @@ contract MayanSwift {
 		emit OrderCanceled(orderHash);
 	}
 
-	function makePayments(FulfillMsg memory fulfillMsg) internal {
-		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
+	function makePayments(bytes32 _destAddr, bytes32 _tokenOut, uint64 _amountPromised, uint64 _gasDrop, bytes32 _referrerAddr, uint64 _referrerBps, uint64 _protocolBps) internal {
+		address tokenOut = truncateAddress(_tokenOut);
 		uint8 decimals;
 		if (tokenOut == address(0)) {
 			decimals = 18;
@@ -318,33 +436,33 @@ contract MayanSwift {
 			decimals = decimalsOf(tokenOut);
 		}
 
-		uint256 amountPromised = deNormalizeAmount(fulfillMsg.amountPromised, decimals);
-		address referrerAddr = truncateAddress(fulfillMsg.referrerAddr);
+		uint256 amountPromised = deNormalizeAmount(_amountPromised, decimals);
+		address referrerAddr = truncateAddress(_referrerAddr);
 		
 		uint256 amountReferrer = 0;
-		if (referrerAddr != address(0) && fulfillMsg.referrerBps != 0) {
-			amountReferrer = amountPromised * fulfillMsg.referrerBps / 10000;
+		if (referrerAddr != address(0) && _referrerBps != 0) {
+			amountReferrer = amountPromised * _referrerBps / 10000;
 		}
 
-		uint256 amountMayan = 0;
-		if (fulfillMsg.mayanBps != 0) {
-			amountMayan = amountPromised * fulfillMsg.mayanBps / 10000;
+		uint256 amountProtocol = 0;
+		if (_protocolBps != 0) {
+			amountProtocol = amountPromised * _protocolBps / 10000;
 		}
 
-		address destAddr = truncateAddress(fulfillMsg.destAddr);
+		address destAddr = truncateAddress(_destAddr);
 		uint256 wormholeFee = wormhole.messageFee();
 		if (tokenOut == address(0)) {
 			require(msg.value == amountPromised + wormholeFee, 'invalid amount value');
 			if (amountReferrer > 0) {
 				payable(referrerAddr).transfer(amountReferrer);
 			}
-			if (amountMayan > 0) {
-				payable(feeCollector).transfer(amountMayan);
+			if (amountProtocol > 0) {
+				payable(feeCollector).transfer(amountProtocol);
 			}
-			payable(destAddr).transfer(amountPromised - amountReferrer - amountMayan);
+			payable(destAddr).transfer(amountPromised - amountReferrer - amountProtocol);
 		} else {
-			if (fulfillMsg.gasDrop > 0) {
-				uint256 gasDrop = deNormalizeAmount(fulfillMsg.gasDrop, 18);
+			if (_gasDrop > 0) {
+				uint256 gasDrop = deNormalizeAmount(_gasDrop, 18);
 				require(msg.value == gasDrop + wormholeFee, 'invalid gas drop value');
 				payable(destAddr).transfer(gasDrop);
 			} else {
@@ -354,10 +472,10 @@ contract MayanSwift {
 			if (amountReferrer > 0) {
 				IERC20(tokenOut).safeTransferFrom(msg.sender, referrerAddr, amountReferrer);
 			}
-			if (amountMayan > 0) {
-				IERC20(tokenOut).safeTransferFrom(msg.sender, feeCollector, amountMayan);
+			if (amountProtocol > 0) {
+				IERC20(tokenOut).safeTransferFrom(msg.sender, feeCollector, amountProtocol);
 			}
-			IERC20(tokenOut).safeTransferFrom(msg.sender, destAddr, amountPromised - amountReferrer - amountMayan);
+			IERC20(tokenOut).safeTransferFrom(msg.sender, destAddr, amountPromised - amountReferrer - amountProtocol);
 		}
 	}
 
@@ -372,33 +490,6 @@ contract MayanSwift {
 		fulfillMsg.orderHash = encoded.toBytes32(index);
 		index += 32;
 
-		fulfillMsg.destChainId = encoded.toUint16(index);
-		index += 2;
-
-		fulfillMsg.destAddr = encoded.toBytes32(index);
-		index += 32;
-
-		fulfillMsg.driver = encoded.toBytes32(index);
-		index += 32;
-
-		fulfillMsg.tokenOut = encoded.toBytes32(index);
-		index += 32;
-
-		fulfillMsg.amountPromised = encoded.toUint64(index);
-		index += 8;
-
-		fulfillMsg.gasDrop = encoded.toUint64(index);
-		index += 8;
-
-		fulfillMsg.referrerAddr = encoded.toBytes32(index);
-		index += 32;
-
-		fulfillMsg.referrerBps = encoded.toUint8(index);
-		index += 1;
-
-		fulfillMsg.mayanBps = encoded.toUint8(index);
-		index += 1;
-
 		fulfillMsg.srcChainId = encoded.toUint16(index);
 		index += 2;
 
@@ -407,6 +498,33 @@ contract MayanSwift {
 
 		fulfillMsg.amountIn = encoded.toUint64(index);
 		index += 8;
+
+		fulfillMsg.destAddr = encoded.toBytes32(index);
+		index += 32;
+
+		fulfillMsg.destChainId = encoded.toUint16(index);
+		index += 2;
+
+		fulfillMsg.tokenOut = encoded.toBytes32(index);
+		index += 32;
+
+		fulfillMsg.amountPromised = encoded.toUint64(index);
+		index += 8;
+
+		fulfillMsg.gasDrop = encoded.toUint64(index);
+		index += 8;	
+
+		fulfillMsg.referrerAddr = encoded.toBytes32(index);
+		index += 32;
+
+		fulfillMsg.referrerBps = encoded.toUint8(index);
+		index += 1;
+
+		fulfillMsg.protocolBps = encoded.toUint8(index);
+		index += 1;
+
+		fulfillMsg.driver = encoded.toBytes32(index);
+		index += 32;
 
 		require(encoded.length == index, 'invalid msg lenght');
 	}
@@ -441,13 +559,14 @@ contract MayanSwift {
 			key.srcChainId,
 			key.tokenIn,
 			key.amountIn,
+			key.destAddr,
+			key.destChainId,
 			key.tokenOut,
 			key.minAmountOut,
 			key.gasDrop,
-			key.destAddr,
-			key.destChainId,
 			key.referrerAddr,
 			key.referrerBps,
+			key.protocolBps,
 			key.auctionMode,
 			key.random
 		);
@@ -496,6 +615,11 @@ contract MayanSwift {
 	function setFeeCollector(address _feeCollector) public {
 		require(msg.sender == guardian, 'only guardian');
 		feeCollector = _feeCollector;
+	}
+
+	function setDefaultMayanBps(uint8 _defaultProtocolBps) public {
+		require(msg.sender == guardian, 'only guardian');
+		defaultProtocolBps = _defaultProtocolBps;
 	}
 
 	function setConsistencyLevel(uint8 _consistencyLevel) public {

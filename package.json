@@ -14,7 +14,7 @@
   "homepage": "https://github.com/mayan-finance/evm-contracts#readme",
   "dependencies": {
     "@openzeppelin/contracts": "^4.9.3",
-    "@solana/web3.js": "^1.87.6",
+    "@solana/web3.js": "^1.90.0",
     "hardhat": "^2.12.1"
   },
   "devDependencies": {
