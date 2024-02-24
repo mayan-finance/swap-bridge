@@ -47,6 +47,8 @@ contract MayanSwift {
 		bytes32 destAddr;
 		uint16 destChainId;
 		bytes32 referrerAddr;
+		uint8 referrerBps;
+		uint8 auctionMode;
 		bytes32 random;
 	}
 
@@ -84,6 +86,12 @@ contract MayanSwift {
 		uint64 amountIn;
 	}
 
+	struct Criteria {
+		bytes32 referrerAddr;
+		uint8 referrerBps;
+		uint8 auctionMode;
+	}
+
 	constructor(address _wormhole, address _feeCollector, uint16 _auctionChainId, bytes32 _auctionAddr, bytes32 _solanaEmitter, uint8 _consistencyLevel) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
@@ -94,7 +102,7 @@ contract MayanSwift {
 		consistencyLevel = _consistencyLevel;
 	}
 
-	function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, bytes32 referrerAddr, bytes32 random, bytes32 destEmitter) public payable returns (bytes32 orderHash) {
+	function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, Criteria memory criteria, bytes32 random, bytes32 destEmitter) public payable returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
@@ -113,7 +121,9 @@ contract MayanSwift {
 			gasDrop: gasDrop,
 			destAddr: destAddr,
 			destChainId: destChainId,
-			referrerAddr: referrerAddr,
+			referrerAddr: criteria.referrerAddr,
+			referrerBps: criteria.referrerBps,
+			auctionMode: criteria.auctionMode,
 			random: random
 		});
 		orderHash = keccak256(encodeKey(key));
@@ -131,7 +141,7 @@ contract MayanSwift {
 		emit OrderCreated(orderHash);
 	}
 
-	function createOrderWithToken(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, address tokenIn, uint256 amountIn, bytes32 referrerAddr, bytes32 random, bytes32 destEmitter) public returns (bytes32 orderHash) {
+	function createOrderWithToken(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, address tokenIn, uint256 amountIn, Criteria memory criteria, bytes32 random, bytes32 destEmitter) public returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
 
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
@@ -154,7 +164,9 @@ contract MayanSwift {
 			gasDrop: gasDrop,
 			destAddr: destAddr,
 			destChainId: destChainId,
-			referrerAddr: referrerAddr,
+			referrerAddr: criteria.referrerAddr,
+			referrerBps: criteria.referrerBps,
+			auctionMode: criteria.auctionMode,
 			random: random
 		});
 		orderHash = keccak256(encodeKey(key));
@@ -257,7 +269,7 @@ contract MayanSwift {
 		}
 	}
 
-	function cancelOrder(bytes32 trader, uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 referrerAddr, bytes32 random) public payable returns (uint64 sequence) {
+	function cancelOrder(bytes32 trader, uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, Criteria memory criteria, bytes32 random) public payable returns (uint64 sequence) {
 		Key memory key = Key({
 			trader: trader,
 			srcChainId: srcChainId,
@@ -268,7 +280,9 @@ contract MayanSwift {
 			gasDrop: gasDrop,
 			destAddr: bytes32(uint256(uint160(msg.sender))),
 			destChainId: wormhole.chainId(),
-			referrerAddr: referrerAddr,
+			referrerAddr: criteria.referrerAddr,
+			referrerBps: criteria.referrerBps,
+			auctionMode: criteria.auctionMode,
 			random: random
 		});
 		bytes32 orderHash = keccak256(encodeKey(key));
@@ -433,6 +447,8 @@ contract MayanSwift {
 			key.destAddr,
 			key.destChainId,
 			key.referrerAddr,
+			key.referrerBps,
+			key.auctionMode,
 			key.random
 		);
 	}
