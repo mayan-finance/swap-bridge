@@ -123,7 +123,6 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 destEmitter
 	) nonReentrant public payable returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
-		require(criteria.auctionMode > 0, 'invalid auction mode');
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
 		require(normlizedAmountIn > 0, 'small amount in');
@@ -176,7 +175,6 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 destEmitter
 	) nonReentrant public returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
-		require(criteria.auctionMode > 0, 'invalid auction mode');
 
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
