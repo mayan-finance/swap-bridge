@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/IWormhole.sol";
 import "./interfaces/IWETH.sol";
 import "./libs/BytesLib.sol";
+import "./libs/SignatureVerification.sol";
 
 contract MayanSwift is ReentrancyGuard {
 	event OrderCreated(bytes32 key);
@@ -18,6 +19,7 @@ contract MayanSwift is ReentrancyGuard {
 
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
+	using SignatureVerification for bytes;
 
 	IWormhole wormhole;
 	uint8 public defaultProtocolBps;
@@ -30,6 +32,8 @@ contract MayanSwift is ReentrancyGuard {
 	address public nextGuardian;
 	bool public paused;
 
+	bytes4 private constant _RECEIVE_WITH_AUTHORIZATION_SELECTOR = 0xef55bec6;
+
 	mapping(bytes32 => Order) private orders;
 
 	struct Order {
@@ -37,6 +41,19 @@ contract MayanSwift is ReentrancyGuard {
 		uint16 destChainId;
 		Status status;
 	}
+
+	struct OrderParams {
+		bytes32 tokenOut;
+		uint64 minAmountOut;
+		uint64 gasDrop;
+		bytes32 destAddr;
+		uint16 destChainId;
+		bytes32 referrerAddr;
+		uint8 referrerBps;
+		uint8 auctionMode;
+		bytes32 random;
+		bytes32 destEmitter;
+	}	
 
 	struct Key {
 		bytes32 trader;
@@ -89,10 +106,12 @@ contract MayanSwift is ReentrancyGuard {
 		uint64 amountIn;
 	}
 
-	struct Criteria {
-		bytes32 referrerAddr;
-		uint8 referrerBps;
-		uint8 auctionMode;
+	struct EIP712Domain {
+		string name;
+		string version;
+		uint256 chainId;
+		address verifyingContract;
+		bytes32 salt;
 	}
 
 	constructor(
@@ -112,23 +131,14 @@ contract MayanSwift is ReentrancyGuard {
 		consistencyLevel = _consistencyLevel;
 	}
 
-	function createOrderWithEth(
-		bytes32 tokenOut,
-		uint64 minAmountOut,
-		uint64 gasDrop,
-		bytes32 destAddr,
-		uint16 destChainId,
-		Criteria memory criteria,
-		bytes32 random,
-		bytes32 destEmitter
-	) nonReentrant public payable returns (bytes32 orderHash) {
+	function createOrderWithEth(OrderParams memory params) nonReentrant public payable returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
 		require(normlizedAmountIn > 0, 'small amount in');
 
-		if (tokenOut == bytes32(0)) {
-			require(gasDrop == 0, 'gas drop not supported');
+		if (params.tokenOut == bytes32(0)) {
+			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
 		Key memory key = Key({
@@ -136,44 +146,33 @@ contract MayanSwift is ReentrancyGuard {
 			srcChainId: wormhole.chainId(),
 			tokenIn: bytes32(0),
 			amountIn: normlizedAmountIn,
-			tokenOut: tokenOut,
-			minAmountOut: minAmountOut,
-			gasDrop: gasDrop,
-			destAddr: destAddr,
-			destChainId: destChainId,
-			referrerAddr: criteria.referrerAddr,
-			referrerBps: criteria.referrerBps,
+			tokenOut: params.tokenOut,
+			minAmountOut: params.minAmountOut,
+			gasDrop: params.gasDrop,
+			destAddr: params.destAddr,
+			destChainId: params.destChainId,
+			referrerAddr: params.referrerAddr,
+			referrerBps: params.referrerBps,
 			protocolBps: defaultProtocolBps,
-			auctionMode: criteria.auctionMode,
-			random: random
+			auctionMode: params.auctionMode,
+			random: params.random
 		});
 		orderHash = keccak256(encodeKey(key));
 
-		require(destChainId != wormhole.chainId(), 'same src and dest chains');
-		require(destChainId > 0, 'invalid dest chain id');
+		require(params.destChainId != wormhole.chainId(), 'same src and dest chains');
+		require(params.destChainId > 0, 'invalid dest chain id');
 		require(orders[orderHash].destChainId == 0, 'duplicate order hash');
 
-		orders[orderHash].destChainId = destChainId;
+		orders[orderHash].destChainId = params.destChainId;
 		orders[orderHash].status = Status.CREATED;
-		if (destEmitter != bytes32(0)) {
-			orders[orderHash].destEmitter = destEmitter;
+		if (params.destEmitter != bytes32(0)) {
+			orders[orderHash].destEmitter = params.destEmitter;
 		}
 
 		emit OrderCreated(orderHash);
 	}
 
-	function createOrderWithToken(
-		bytes32 tokenOut,
-		uint64 minAmountOut,
-		uint64 gasDrop,
-		bytes32 destAddr,
-		uint16 destChainId,
-		address tokenIn,
-		uint256 amountIn,
-		Criteria memory criteria,
-		bytes32 random,
-		bytes32 destEmitter
-	) nonReentrant public returns (bytes32 orderHash) {
+	function createOrderWithToken(address tokenIn, uint256 amountIn, OrderParams memory params) nonReentrant public returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
 
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
@@ -182,8 +181,8 @@ contract MayanSwift is ReentrancyGuard {
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
 		require(normlizedAmountIn > 0, 'small amount in');
-		if (tokenOut == bytes32(0)) {
-			require(gasDrop == 0, 'gas drop not supported');
+		if (params.tokenOut == bytes32(0)) {
+			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
 		Key memory key = Key({
@@ -191,34 +190,106 @@ contract MayanSwift is ReentrancyGuard {
 			srcChainId: wormhole.chainId(),
 			tokenIn: bytes32(uint256(uint160(tokenIn))),
 			amountIn: normlizedAmountIn,
-			tokenOut: tokenOut,
-			minAmountOut: minAmountOut,
-			gasDrop: gasDrop,
-			destAddr: destAddr,
-			destChainId: destChainId,
-			referrerAddr: criteria.referrerAddr,
-			referrerBps: criteria.referrerBps,
+			tokenOut: params.tokenOut,
+			minAmountOut: params.minAmountOut,
+			gasDrop: params.gasDrop,
+			destAddr: params.destAddr,
+			destChainId: params.destChainId,
+			referrerAddr: params.referrerAddr,
+			referrerBps: params.referrerBps,
 			protocolBps: defaultProtocolBps,
-			auctionMode: criteria.auctionMode,
-			random: random
+			auctionMode: params.auctionMode,
+			random: params.random
 		});
 		orderHash = keccak256(encodeKey(key));
 
-		require(destChainId != wormhole.chainId(), 'same src and dest chain');
-		require(destChainId > 0, 'invalid dest chain id');
+		require(params.destChainId != wormhole.chainId(), 'same src and dest chain');
+		require(params.destChainId > 0, 'invalid dest chain id');
 		require(orders[orderHash].destChainId == 0, 'duplicate key');
 
 		orders[orderHash] = Order({
-			destEmitter: destEmitter,
-			destChainId: destChainId,
+			destEmitter: params.destEmitter,
+			destChainId: params.destChainId,
 			status: Status.CREATED
 		});
 
-		if (destEmitter != bytes32(0)) {
-			orders[orderHash].destEmitter = destEmitter;
+		if (params.destEmitter != bytes32(0)) {
+			orders[orderHash].destEmitter = params.destEmitter;
 		}
 
 		emit OrderCreated(orderHash);
+	}
+
+	function createOrderWithSig(
+		address tokenIn,
+		uint256 amountIn,
+		OrderParams memory params,
+		bytes calldata signedOrderHash,
+		bytes calldata receiveAuthorization
+	) nonReentrant public returns (bytes32 orderHash) {
+		require(paused == false, 'contract is paused');
+
+		(address owner, address to, uint256 amount) = abi.decode(
+			receiveAuthorization[0:96],
+			(address, address, uint256)
+		);
+		require(to == address(this), 'recipient is not this contract');
+		require(amount == amountIn, 'invalid amount in');
+
+		amountIn = IERC20(tokenIn).balanceOf(address(this));
+
+		(bool success, ) = tokenIn.call(
+			abi.encodePacked(
+				_RECEIVE_WITH_AUTHORIZATION_SELECTOR,
+				receiveAuthorization
+			)
+		);
+		require(success, 'failed to transfer tokens');
+
+		amountIn = IERC20(tokenIn).balanceOf(address(this)) - amountIn;
+		require(amountIn == amount, 'invalid amount transferred');
+
+		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
+		require(normlizedAmountIn > 0, 'small amount in');
+		if (params.tokenOut == bytes32(0)) {
+			require(params.gasDrop == 0, 'gas drop not supported');
+		}
+
+		Key memory key = Key({
+			trader: bytes32(uint256(uint160(owner))),
+			srcChainId: wormhole.chainId(),
+			tokenIn: bytes32(uint256(uint160(tokenIn))),
+			amountIn: normlizedAmountIn,
+			tokenOut: params.tokenOut,
+			minAmountOut: params.minAmountOut,
+			gasDrop: params.gasDrop,
+			destAddr: params.destAddr,
+			destChainId: params.destChainId,
+			referrerAddr: params.referrerAddr,
+			referrerBps: params.referrerBps,
+			protocolBps: defaultProtocolBps,
+			auctionMode: params.auctionMode,
+			random: params.random
+		});
+		orderHash = keccak256(encodeKey(key));
+
+		signedOrderHash.verify(orderHash, owner);
+
+		require(params.destChainId != wormhole.chainId(), 'same src and dest chain');
+		require(params.destChainId > 0, 'invalid dest chain id');
+		require(orders[orderHash].destChainId == 0, 'duplicate key');
+
+		orders[orderHash] = Order({
+			destEmitter: params.destEmitter,
+			destChainId: params.destChainId,
+			status: Status.CREATED
+		});
+
+		if (params.destEmitter != bytes32(0)) {
+			orders[orderHash].destEmitter = params.destEmitter;
+		}
+
+		emit OrderCreated(orderHash);		
 	}
 
 	function fulfillOrder(bytes memory encodedVm, bytes32 recepient) nonReentrant public payable returns (uint64 sequence) {
@@ -269,29 +340,24 @@ contract MayanSwift is ReentrancyGuard {
 		uint16 srcChainId,
 		bytes32 tokenIn,
 		uint64 amountIn,
-		bytes32 tokenOut,
-		uint64 amountOut,
-		uint64 gasDrop,
-		bytes32 destAddr,
-		Criteria memory criteria,
 		uint8 protocolBps,
-		bytes32 random
+		OrderParams memory params
 	) public nonReentrant payable returns (uint64 sequence) {
 		Key memory key = Key({
 			trader: trader,
 			srcChainId: srcChainId,
 			tokenIn: tokenIn,
 			amountIn: amountIn,
-			tokenOut: tokenOut,
-			minAmountOut: amountOut,
-			gasDrop: gasDrop,
-			destAddr: destAddr,
+			tokenOut: params.tokenOut,
+			minAmountOut: params.minAmountOut,
+			gasDrop: params.gasDrop,
+			destAddr: params.destAddr,
 			destChainId: wormhole.chainId(),
-			referrerAddr: criteria.referrerAddr,
-			referrerBps: criteria.referrerBps,
+			referrerAddr: params.referrerAddr,
+			referrerBps: params.referrerBps,
 			protocolBps: protocolBps,
-			auctionMode: criteria.auctionMode,
-			random: random
+			auctionMode: params.auctionMode,
+			random: params.random
 		});
 		bytes32 computedOrderHash = keccak256(encodeKey(key));
 
@@ -301,12 +367,12 @@ contract MayanSwift is ReentrancyGuard {
 		orders[computedOrderHash].status = Status.FULFILLED;
 
 		makePayments(
-			destAddr,
-			tokenOut,
-			amountOut,
-			gasDrop,
-			criteria.referrerAddr,
-			criteria.referrerBps,
+			params.destAddr,
+			params.tokenOut,
+			params.minAmountOut,
+			params.gasDrop,
+			params.referrerAddr,
+			params.referrerBps,
 			protocolBps
 		);
 
@@ -382,7 +448,10 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 tokenOut,
 		uint64 minAmountOut,
 		uint64 gasDrop,
-		Criteria memory criteria,
+		bytes32 referrerAddr,
+		uint8 referrerBps,
+		uint8 protocolBps,
+		uint8 auctionMode,
 		bytes32 random
 	) public nonReentrant payable returns (uint64 sequence) {
 		Key memory key = Key({
@@ -395,10 +464,10 @@ contract MayanSwift is ReentrancyGuard {
 			gasDrop: gasDrop,
 			destAddr: bytes32(uint256(uint160(msg.sender))),
 			destChainId: wormhole.chainId(),
-			referrerAddr: criteria.referrerAddr,
-			referrerBps: criteria.referrerBps,
-			protocolBps: defaultProtocolBps,
-			auctionMode: criteria.auctionMode,
+			referrerAddr: referrerAddr,
+			referrerBps: referrerBps,
+			protocolBps: protocolBps,
+			auctionMode: auctionMode,
 			random: random
 		});
 		bytes32 orderHash = keccak256(encodeKey(key));
@@ -413,7 +482,7 @@ contract MayanSwift is ReentrancyGuard {
 			srcChainId: key.srcChainId,
 			tokenIn: key.tokenIn,
 			amountIn: key.amountIn,
-			recipient: trader
+			recipient: key.trader
 		});
 
 		bytes memory encoded = encodeUnlockMsg(cancelMsg);
