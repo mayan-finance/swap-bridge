@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/IWormhole.sol";
 import "./interfaces/IWETH.sol";
+import "./interfaces/IERC3009.sol";
 import "./libs/BytesLib.sol";
 import "./libs/SignatureVerification.sol";
 
@@ -21,7 +22,7 @@ contract MayanSwift is ReentrancyGuard {
 	using BytesLib for bytes;
 	using SignatureVerification for bytes;
 
-	IWormhole wormhole;
+	IWormhole public wormhole;
 	uint8 public defaultProtocolBps;
 	address public feeCollector;
 	uint16 public auctionChainId;
@@ -32,7 +33,7 @@ contract MayanSwift is ReentrancyGuard {
 	address public nextGuardian;
 	bool public paused;
 
-	bytes4 private constant _RECEIVE_WITH_AUTHORIZATION_SELECTOR = 0xef55bec6;
+	bytes32 private domainSeparator;
 
 	mapping(bytes32 => Order) private orders;
 
@@ -106,12 +107,10 @@ contract MayanSwift is ReentrancyGuard {
 		uint64 amountIn;
 	}
 
-	struct EIP712Domain {
-		string name;
-		string version;
-		uint256 chainId;
-		address verifyingContract;
-		bytes32 salt;
+	struct TransferParams {
+		address from;
+		uint256 validAfter;
+		uint256 validBefore;
 	}
 
 	constructor(
@@ -129,6 +128,13 @@ contract MayanSwift is ReentrancyGuard {
 		auctionAddr = _auctionAddr;
 		solanaEmitter = _solanaEmitter;
 		consistencyLevel = _consistencyLevel;
+
+		domainSeparator = keccak256(abi.encode(
+			keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)"),
+			keccak256("Mayan Swift v1.0"),
+			uint256(wormhole.chainId()),
+			address(this)
+		));
 	}
 
 	function createOrderWithEth(OrderParams memory params) nonReentrant public payable returns (bytes32 orderHash) {
@@ -225,29 +231,10 @@ contract MayanSwift is ReentrancyGuard {
 		uint256 amountIn,
 		OrderParams memory params,
 		bytes calldata signedOrderHash,
-		bytes calldata receiveAuthorization
+		TransferParams memory transferParams,
+		bytes memory transferSig
 	) nonReentrant public returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
-
-		(address owner, address to, uint256 amount) = abi.decode(
-			receiveAuthorization[0:96],
-			(address, address, uint256)
-		);
-		require(to == address(this), 'recipient is not this contract');
-		require(amount == amountIn, 'invalid amount in');
-
-		amountIn = IERC20(tokenIn).balanceOf(address(this));
-
-		(bool success, ) = tokenIn.call(
-			abi.encodePacked(
-				_RECEIVE_WITH_AUTHORIZATION_SELECTOR,
-				receiveAuthorization
-			)
-		);
-		require(success, 'failed to transfer tokens');
-
-		amountIn = IERC20(tokenIn).balanceOf(address(this)) - amountIn;
-		require(amountIn == amount, 'invalid amount transferred');
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
 		require(normlizedAmountIn > 0, 'small amount in');
@@ -256,7 +243,7 @@ contract MayanSwift is ReentrancyGuard {
 		}
 
 		Key memory key = Key({
-			trader: bytes32(uint256(uint160(owner))),
+			trader: bytes32(uint256(uint160(transferParams.from))),
 			srcChainId: wormhole.chainId(),
 			tokenIn: bytes32(uint256(uint160(tokenIn))),
 			amountIn: normlizedAmountIn,
@@ -273,7 +260,20 @@ contract MayanSwift is ReentrancyGuard {
 		});
 		orderHash = keccak256(encodeKey(key));
 
-		signedOrderHash.verify(orderHash, owner);
+		uint256 amount = IERC20(tokenIn).balanceOf(address(this));
+		IERC3009(tokenIn).receiveWithAuthorization(
+			transferParams.from,
+			address(this),
+			amountIn,
+			transferParams.validAfter,
+			transferParams.validBefore,
+			orderHash,
+			transferSig
+		);
+		amount = IERC20(tokenIn).balanceOf(address(this)) - amount;
+		require(amountIn == amount, 'invalid amount transferred');
+
+		signedOrderHash.verify(hashTypedData(orderHash), transferParams.from);
 
 		require(params.destChainId != wormhole.chainId(), 'same src and dest chain');
 		require(params.destChainId > 0, 'invalid dest chain id');
@@ -289,7 +289,7 @@ contract MayanSwift is ReentrancyGuard {
 			orders[orderHash].destEmitter = params.destEmitter;
 		}
 
-		emit OrderCreated(orderHash);		
+		emit OrderCreated(orderHash);
 	}
 
 	function fulfillOrder(bytes memory encodedVm, bytes32 recepient) nonReentrant public payable returns (uint64 sequence) {
@@ -672,6 +672,21 @@ contract MayanSwift is ReentrancyGuard {
 			amount *= 10 ** (decimals - 8);
 		}
 		return amount;
+	}
+
+	function hashTypedData(bytes32 orderHash) internal view returns (bytes32) {
+		bytes32 dataHash = keccak256(abi.encode(keccak256("CreateOrder(bytes32 orderHash)"), orderHash));
+		return toTypedDataHash(domainSeparator, dataHash);
+	}
+
+	function toTypedDataHash(bytes32 _domainSeparator, bytes32 _structHash) internal pure returns (bytes32 digest) {
+		assembly {
+			let ptr := mload(0x40)
+			mstore(ptr, "\x19\x01")
+			mstore(add(ptr, 0x02), _domainSeparator)
+			mstore(add(ptr, 0x22), _structHash)
+			digest := keccak256(ptr, 0x42)
+		}
 	}
 
 	function setPause(bool _pause) public {
