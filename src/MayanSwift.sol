@@ -406,17 +406,7 @@ contract MayanSwift is ReentrancyGuard {
 		emit OrderFulfilled(computedOrderHash);
 	}
 
-	function unlockOrder(bytes memory encodedVm) nonReentrant public {
-		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
-
-		require(valid, reason);
-
-		UnlockMsg memory swift = parseUnlockPayload(vm.payload);
-		Order memory order = getOrder(swift.orderHash);
-
-		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
-		require(vm.emitterAddress == order.destEmitter, 'invalid emitter address');
-
+	function unlockOrder(UnlockMsg memory swift, Order memory order) internal {
 		require(swift.srcChainId == wormhole.chainId(), 'invalid source chain');
 		require(order.destChainId > 0, 'order not exists');
 		require(order.status == Status.CREATED, 'order is not created');
@@ -449,6 +439,49 @@ contract MayanSwift is ReentrancyGuard {
 			emit OrderUnlocked(swift.orderHash);
 		} else if (swift.action == 3) {
 			emit OrderRefunded(swift.orderHash);
+		}
+	}
+
+	function unlockSingle(bytes memory encodedVm) nonReentrant public {
+		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+
+		UnlockMsg memory unlockMsg = parseUnlockPayload(vm.payload);
+		Order memory order = getOrder(unlockMsg.orderHash);
+
+		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
+		require(vm.emitterAddress == order.destEmitter, 'invalid emitter address');
+
+		unlockOrder(unlockMsg, order);
+	}
+
+	function unlockBatch(bytes memory encodedVm) nonReentrant public {
+		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+
+		uint index = 0;
+		uint8 action = vm.payload.toUint8(0);
+		index += 1; 
+		require(action == 4, 'invalid action');
+
+		uint16 size = vm.payload.toUint16(index);
+		index += 2;
+		for(uint i=0; i<size; i++) {
+			UnlockMsg memory unlockMsg = UnlockMsg({
+				action: 2,
+				orderHash: vm.payload.toBytes32(index),
+				srcChainId: vm.payload.toUint16(index + 32),
+				tokenIn: vm.payload.toBytes32(index + 34),
+				amountIn: vm.payload.toUint64(index + 66),
+				recipient: vm.payload.toBytes32(index + 74)
+			});
+			index += 106;
+			Order memory order = getOrder(unlockMsg.orderHash);
+			require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
+			require(vm.emitterAddress == order.destEmitter, 'invalid emitter address');
+			unlockOrder(unlockMsg, order);
 		}
 	}
 
