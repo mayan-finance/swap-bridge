@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/IWormhole.sol";
+import "./interfaces/IFeeManager.sol";
 import "./interfaces/IWETH.sol";
 import "./interfaces/IERC3009.sol";
 import "./libs/BytesLib.sol";
@@ -23,8 +24,7 @@ contract MayanSwift is ReentrancyGuard {
 	using SignatureVerification for bytes;
 
 	IWormhole public wormhole;
-	uint8 public defaultProtocolBps;
-	address public feeCollector;
+	IFeeManager public feeManager;
 	uint16 public auctionChainId;
 	bytes32 public auctionAddr;
 	bytes32 public solanaEmitter;
@@ -115,7 +115,7 @@ contract MayanSwift is ReentrancyGuard {
 
 	constructor(
 		address _wormhole,
-		address _feeCollector,
+		address _feeManager,
 		uint16 _auctionChainId,
 		bytes32 _auctionAddr,
 		bytes32 _solanaEmitter,
@@ -123,7 +123,7 @@ contract MayanSwift is ReentrancyGuard {
 	) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
-		feeCollector = _feeCollector;
+		feeManager = IFeeManager(_feeManager);
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
 		solanaEmitter = _solanaEmitter;
@@ -147,6 +147,10 @@ contract MayanSwift is ReentrancyGuard {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
+		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, address(0), params.tokenOut, params.destChainId, params.referrerBps);
+		require(protocolBps <= 50, 'invalid protocol bps');
+		require(params.referrerBps <= 50, 'invalid referrer bps');
+
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(msg.sender))),
 			srcChainId: wormhole.chainId(),
@@ -159,7 +163,7 @@ contract MayanSwift is ReentrancyGuard {
 			destChainId: params.destChainId,
 			referrerAddr: params.referrerAddr,
 			referrerBps: params.referrerBps,
-			protocolBps: defaultProtocolBps,
+			protocolBps: protocolBps,
 			auctionMode: params.auctionMode,
 			random: params.random
 		});
@@ -191,6 +195,10 @@ contract MayanSwift is ReentrancyGuard {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
+		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
+		require(protocolBps <= 50, 'invalid protocol bps');
+		require(params.referrerBps <= 50, 'invalid referrer bps');
+
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(msg.sender))),
 			srcChainId: wormhole.chainId(),
@@ -203,7 +211,7 @@ contract MayanSwift is ReentrancyGuard {
 			destChainId: params.destChainId,
 			referrerAddr: params.referrerAddr,
 			referrerBps: params.referrerBps,
-			protocolBps: defaultProtocolBps,
+			protocolBps: protocolBps,
 			auctionMode: params.auctionMode,
 			random: params.random
 		});
@@ -242,6 +250,10 @@ contract MayanSwift is ReentrancyGuard {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
+		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
+		require(protocolBps <= 50, 'invalid protocol bps');
+		require(params.referrerBps <= 50, 'invalid referrer bps');
+
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(transferParams.from))),
 			srcChainId: wormhole.chainId(),
@@ -254,7 +266,7 @@ contract MayanSwift is ReentrancyGuard {
 			destChainId: params.destChainId,
 			referrerAddr: params.referrerAddr,
 			referrerBps: params.referrerBps,
-			protocolBps: defaultProtocolBps,
+			protocolBps: protocolBps,
 			auctionMode: params.auctionMode,
 			random: params.random
 		});
@@ -524,7 +536,7 @@ contract MayanSwift is ReentrancyGuard {
 				payable(referrerAddr).transfer(amountReferrer);
 			}
 			if (amountProtocol > 0) {
-				payable(feeCollector).transfer(amountProtocol);
+				payable(feeManager.feeCollector()).transfer(amountProtocol);
 			}
 			payable(destAddr).transfer(amountPromised - amountReferrer - amountProtocol);
 		} else {
@@ -540,7 +552,7 @@ contract MayanSwift is ReentrancyGuard {
 				IERC20(tokenOut).safeTransferFrom(msg.sender, referrerAddr, amountReferrer);
 			}
 			if (amountProtocol > 0) {
-				IERC20(tokenOut).safeTransferFrom(msg.sender, feeCollector, amountProtocol);
+				IERC20(tokenOut).safeTransferFrom(msg.sender, feeManager.feeCollector(), amountProtocol);
 			}
 			IERC20(tokenOut).safeTransferFrom(msg.sender, destAddr, amountPromised - amountReferrer - amountProtocol);
 		}
@@ -694,14 +706,9 @@ contract MayanSwift is ReentrancyGuard {
 		paused = _pause;
 	}
 
-	function setFeeCollector(address _feeCollector) public {
+	function setFeeManager(address _feeManager) public {
 		require(msg.sender == guardian, 'only guardian');
-		feeCollector = _feeCollector;
-	}
-
-	function setDefaultMayanBps(uint8 _defaultProtocolBps) public {
-		require(msg.sender == guardian, 'only guardian');
-		defaultProtocolBps = _defaultProtocolBps;
+		feeManager = IFeeManager(_feeManager);
 	}
 
 	function setConsistencyLevel(uint8 _consistencyLevel) public {
