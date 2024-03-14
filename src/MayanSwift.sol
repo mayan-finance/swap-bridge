@@ -36,6 +36,7 @@ contract MayanSwift is ReentrancyGuard {
 	bytes32 private domainSeparator;
 
 	mapping(bytes32 => Order) private orders;
+	mapping(bytes32 => bytes) public unlockMsgs;
 
 	struct Order {
 		bytes32 destEmitter;
@@ -79,6 +80,14 @@ contract MayanSwift is ReentrancyGuard {
 		UNLOCKED,
 		CANCELED,
 		REFUNDED
+	}
+
+	enum Action {
+		NONE,
+		FULFILL,
+		UNLOCK,
+		CANCEL,
+		BATCH_UNLOCK
 	}
 
 	struct UnlockMsg {
@@ -304,7 +313,7 @@ contract MayanSwift is ReentrancyGuard {
 		emit OrderCreated(orderHash);
 	}
 
-	function fulfillOrder(bytes memory encodedVm, bytes32 recepient) nonReentrant public payable returns (uint64 sequence) {
+	function fulfillOrder(bytes memory encodedVm, bytes32 recepient, bool batch) nonReentrant public payable returns (uint64 sequence) {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
@@ -340,9 +349,13 @@ contract MayanSwift is ReentrancyGuard {
 
 		bytes memory encoded = encodeUnlockMsg(unlockMsg);
 
-		sequence = wormhole.publishMessage{
-			value : wormhole.messageFee()
-		}(0, encoded, consistencyLevel);
+		if (batch) {
+			unlockMsgs[fulfillMsg.orderHash] = encoded;
+		} else {
+			sequence = wormhole.publishMessage{
+				value : wormhole.messageFee()
+			}(0, encoded, consistencyLevel);
+		}
 
 		emit OrderFulfilled(fulfillMsg.orderHash);
 	}
@@ -353,7 +366,8 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 tokenIn,
 		uint64 amountIn,
 		uint8 protocolBps,
-		OrderParams memory params
+		OrderParams memory params,
+		bool batch
 	) public nonReentrant payable returns (uint64 sequence) {
 		Key memory key = Key({
 			trader: trader,
@@ -399,9 +413,13 @@ contract MayanSwift is ReentrancyGuard {
 
 		bytes memory encoded = encodeUnlockMsg(unlockMsg);
 
-		sequence = wormhole.publishMessage{
-			value : wormhole.messageFee()
-		}(0, encoded, consistencyLevel);
+		if (batch) {
+			unlockMsgs[computedOrderHash] = encoded;
+		} else {
+			sequence = wormhole.publishMessage{
+				value : wormhole.messageFee()
+			}(0, encoded, consistencyLevel);
+		}
 
 		emit OrderFulfilled(computedOrderHash);
 	}
@@ -411,9 +429,9 @@ contract MayanSwift is ReentrancyGuard {
 		require(order.destChainId > 0, 'order not exists');
 		require(order.status == Status.CREATED, 'order is not created');
 
-		if (swift.action == 2) {
+		if (swift.action == uint8(Action.UNLOCK)) {
 			orders[swift.orderHash].status = Status.UNLOCKED;
-		} else if (swift.action == 3) {
+		} else if (swift.action == uint8(Action.CANCEL)) {
 			orders[swift.orderHash].status = Status.REFUNDED;
 		} else {
 			revert('invalid action');
@@ -435,9 +453,9 @@ contract MayanSwift is ReentrancyGuard {
 			IERC20(tokenIn).safeTransfer(recipient, amountIn);
 		}
 		
-		if (swift.action == 2) {
+		if (swift.action == uint8(Action.UNLOCK)) {
 			emit OrderUnlocked(swift.orderHash);
-		} else if (swift.action == 3) {
+		} else if (swift.action == uint8(Action.CANCEL)) {
 			emit OrderRefunded(swift.orderHash);
 		}
 	}
@@ -464,13 +482,13 @@ contract MayanSwift is ReentrancyGuard {
 		uint index = 0;
 		uint8 action = vm.payload.toUint8(0);
 		index += 1; 
-		require(action == 4, 'invalid action');
+		require(action == uint8(Action.BATCH_UNLOCK), 'invalid action');
 
-		uint16 size = vm.payload.toUint16(index);
+		uint16 count = vm.payload.toUint8(index);
 		index += 2;
-		for(uint i=0; i<size; i++) {
+		for (uint i=0; i<count; i++) {
 			UnlockMsg memory unlockMsg = UnlockMsg({
-				action: 2,
+				action: uint8(Action.UNLOCK),
 				orderHash: vm.payload.toBytes32(index),
 				srcChainId: vm.payload.toUint16(index + 32),
 				tokenIn: vm.payload.toBytes32(index + 34),
@@ -483,6 +501,20 @@ contract MayanSwift is ReentrancyGuard {
 			require(vm.emitterAddress == order.destEmitter, 'invalid emitter address');
 			unlockOrder(unlockMsg, order);
 		}
+		require(index == vm.payload.length, 'invalid payload length');
+	}
+
+	function postBatch(bytes32[] memory orderHashes) public payable returns (uint64 sequence) {
+		bytes memory encoded = abi.encodePacked(uint8(Action.BATCH_UNLOCK), uint8(orderHashes.length));
+		for(uint i=0; i<orderHashes.length; i++) {
+			bytes memory msg = unlockMsgs[orderHashes[i]];
+			require(msg.length > 0, 'invalid order hash');
+			encoded = abi.encodePacked(encoded, unlockMsgs[orderHashes[i]]);
+		}
+		
+		sequence = wormhole.publishMessage{
+			value : msg.value
+		}(0, encoded, consistencyLevel);
 	}
 
 	function cancelOrder(
@@ -597,7 +629,7 @@ contract MayanSwift is ReentrancyGuard {
 		fulfillMsg.action = encoded.toUint8(index);
 		index += 1;
 
-		require(fulfillMsg.action == 1, 'invalid action');
+		require(fulfillMsg.action == uint8(Action.FULFILL), 'invalid action');
 
 		fulfillMsg.orderHash = encoded.toBytes32(index);
 		index += 32;
