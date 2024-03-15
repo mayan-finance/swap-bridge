@@ -23,11 +23,13 @@ contract MayanSwift is ReentrancyGuard {
 	using BytesLib for bytes;
 	using SignatureVerification for bytes;
 
-	IWormhole public wormhole;
+	uint16 constant SOLANA_CHAIN_ID = 1;
+
+	IWormhole public immutable wormhole;
+	uint16 public immutable auctionChainId;
+	bytes32 public immutable auctionAddr;
+	bytes32 public immutable solanaEmitter;
 	IFeeManager public feeManager;
-	uint16 public auctionChainId;
-	bytes32 public auctionAddr;
-	bytes32 public solanaEmitter;
 	uint8 public consistencyLevel;
 	address public guardian;
 	address public nextGuardian;
@@ -141,7 +143,7 @@ contract MayanSwift is ReentrancyGuard {
 		domainSeparator = keccak256(abi.encode(
 			keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)"),
 			keccak256("Mayan Swift v1.0"),
-			uint256(wormhole.chainId()),
+			uint256(IWormhole(_wormhole).chainId()),
 			address(this)
 		));
 	}
@@ -794,7 +796,7 @@ contract MayanSwift is ReentrancyGuard {
 	function getOrder(bytes32 orderHash) public view returns (Order memory order) {
 		order = orders[orderHash];
 		if (order.destEmitter == bytes32(0)) {
-			if (order.destChainId == 1) {
+			if (order.destChainId == SOLANA_CHAIN_ID) {
 				order.destEmitter = solanaEmitter;
 			} else {
 				order.destEmitter = bytes32(uint256(uint160(address(this))));
