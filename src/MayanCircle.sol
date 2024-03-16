@@ -172,6 +172,8 @@ contract MayanCircle is ReentrancyGuard {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 		require(valid, reason);
 
+		// check emitter
+
 		MctpWithFee memory redeemMsg = parseMctpWithFee(vm.payload);
 		require(redeemMsg.action == uint8(Action.BRIDGE_WITH_FEE), 'invalid action');
 
@@ -180,12 +182,13 @@ contract MayanCircle is ReentrancyGuard {
 
 		uint32 cctpSourceDomain = cctpMsg.toUint32(4);
 		uint64 cctpNonce = cctpMsg.toUint64(12);
-		bytes32 cctpSourceToken = cctpMsg.toBytes32(24);
+		bytes32 cctpSourceToken = cctpMsg.toBytes32(120);
 
 		require(cctpSourceDomain == redeemMsg.cctpDomain, 'invalid cctp domain');
 		require(cctpNonce == redeemMsg.cctpNonce, 'invalid cctp nonce');
 
 		address localToken = cctpTokenMessenger.localMinter().getLocalToken(cctpSourceDomain, cctpSourceToken);
+		require(localToken != address(0), 'invalid local token');
 		uint256 amount = IERC20(localToken).balanceOf(address(this));
 		bool success = cctpTokenMessenger.localMessageTransmitter().receiveMessage(cctpMsg, cctpSigs);
 		require(success, 'invalid cctp msg');
@@ -255,6 +258,8 @@ contract MayanCircle is ReentrancyGuard {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 		require(valid, reason);
 
+		// check emitter
+
 		UnlockFeeMsg memory unlockMsg = parseUnlockFeeMsg(vm.payload);
 		require(unlockMsg.action == uint8(Action.UNLOCK_FEE), 'invalid action');
 		require(unlockMsg.cctpDomain == localDomain, 'invalid cctp domain');
@@ -278,6 +283,9 @@ contract MayanCircle is ReentrancyGuard {
 	function mctpUnlockFeeRefined(bytes memory vm1, bytes memory vm2) public nonReentrant {
 		(IWormhole.VM memory vm1, bool valid1, string memory reason1) = wormhole.parseAndVerifyVM(vm1);
 		require(valid1, reason1);
+
+		// check emitter
+
 		UnlockFeeMsg memory unlockMsg = parseUnlockFeeMsg(vm1.payload);
 		require(unlockMsg.action == uint8(Action.UNLOCK_FEE_REFINE), 'invalid action');
 		require(unlockMsg.cctpDomain == localDomain, 'invalid cctp domain');
@@ -288,6 +296,8 @@ contract MayanCircle is ReentrancyGuard {
 
 		(IWormhole.VM memory vm2, bool valid2, string memory reason2) = wormhole.parseAndVerifyVM(vm2);
 		require(valid2, reason2);
+
+		// check emitter
 
 		if (feeLock.destEmitter != bytes32(0)) {
 			require(vm1.emitterAddress == feeLock.destEmitter, 'vm1 invalid emitter addr');
