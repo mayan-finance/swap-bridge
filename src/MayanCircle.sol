@@ -205,9 +205,9 @@ contract MayanCircle is ReentrancyGuard {
 	function redeemWithLockedFee(bytes memory cctpMsg, bytes memory cctpSigs, bytes32 unlockerAddr) public nonReentrant payable returns (uint64 sequence) {
 		uint32 cctpSourceDomain = cctpMsg.toUint32(4);
 		uint64 cctpNonce = cctpMsg.toUint64(12);
+		address caller = truncateAddress(cctpMsg.toBytes32(84));
+		require(caller == address(this), 'invalid caller');
 		address mintRecipient = truncateAddress(cctpMsg.toBytes32(152));
-
-		require(mintRecipient != address(this), 'needs wormhole msg');
 
 		bool success = cctpTokenMessenger.localMessageTransmitter().receiveMessage(cctpMsg, cctpSigs);
 		require(success, 'invalid cctp msg');
@@ -233,7 +233,7 @@ contract MayanCircle is ReentrancyGuard {
 		// emit RedeemedWithLockedFee(cctpSourceDomain, cctpNonce);
 	}
 
-	function redeemWithRefinedFee(uint32 cctpNonce, uint32 cctpDomain, bytes32 destAddr, bytes32 unlockerAddr) public nonReentrant payable returns (uint64 sequence) {
+	function refineFee(uint32 cctpNonce, uint32 cctpDomain, bytes32 destAddr, bytes32 unlockerAddr) public nonReentrant payable returns (uint64 sequence) {
 		uint256 wormholeFee = wormhole.messageFee();
 		payable(truncateAddress(destAddr)).transfer(msg.value - wormholeFee);
 
@@ -280,8 +280,8 @@ contract MayanCircle is ReentrancyGuard {
 		delete feeStorage[unlockMsg.cctpNonce];
 	}
 
-	function mctpUnlockFeeRefined(bytes memory vm1, bytes memory vm2) public nonReentrant {
-		(IWormhole.VM memory vm1, bool valid1, string memory reason1) = wormhole.parseAndVerifyVM(vm1);
+	function mctpUnlockFeeRefined(bytes memory encodedVm1, bytes memory encodedVm2) public nonReentrant {
+		(IWormhole.VM memory vm1, bool valid1, string memory reason1) = wormhole.parseAndVerifyVM(encodedVm1);
 		require(valid1, reason1);
 
 		// check emitter
@@ -294,7 +294,7 @@ contract MayanCircle is ReentrancyGuard {
 		require(feeLock.redeemFee > 0, 'fee not locked');
 		require(unlockMsg.gasDrop < feeLock.gasDrop, 'gas was sufficient');
 
-		(IWormhole.VM memory vm2, bool valid2, string memory reason2) = wormhole.parseAndVerifyVM(vm2);
+		(IWormhole.VM memory vm2, bool valid2, string memory reason2) = wormhole.parseAndVerifyVM(encodedVm2);
 		require(valid2, reason2);
 
 		// check emitter
