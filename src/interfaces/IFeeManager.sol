@@ -6,7 +6,7 @@ interface IFeeManager {
         uint64 amountIn,
         address tokenIn,
         bytes32 tokenOut,
-        uint16 dstChainId,
+        uint16 destChain,
         uint8 referrerBps
     ) external view returns (uint8);
 

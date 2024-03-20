@@ -19,7 +19,7 @@ contract FeeManager is IFeeManager {
 		uint64 amountIn,
 		address tokenIn,
 		bytes32 tokenOut,
-		uint16 dstChainId,
+		uint16 destChain,
 		uint8 referrerBps
 	) external view override returns (uint8 protocolBps) {
 		return 0;
@@ -30,7 +30,7 @@ contract FeeManager is IFeeManager {
 	}
 
 	function setOperator(address _operator) external {
-		require(msg.sender == operator, "only operator");
+		require(msg.sender == operator, 'only operator');
 		operator = _operator;
 	}
 
