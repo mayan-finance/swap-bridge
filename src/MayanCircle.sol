@@ -62,12 +62,15 @@ contract MayanCircle is ReentrancyGuard {
 	}
 
 	struct OrderParams {
+		address tokenIn;
+		uint256 amountIn;
+		uint64 gasDrop;
 		bytes32 destAddr;
 		uint16 destChain;
 		bytes32 tokenOut;
 		uint64 minAmountOut;
-		uint64 redeemFee;
 		uint64 deadline;
+		uint64 redeemFee;
 		bytes32 refAddr;
 		uint8 referrerBps;
 	}
@@ -179,7 +182,14 @@ contract MayanCircle is ReentrancyGuard {
 		}(0, encoded, consistencyLevel);
 	}
 
-	function bridgeWithLockedFee(address tokenIn, uint256 amountIn, uint256 redeemFee, uint64 gasDrop, bytes32 destAddr, CctpRecipient memory recipient) public nonReentrant returns (uint64 cctpNonce) {
+	function bridgeWithLockedFee(
+		address tokenIn,
+		uint256 amountIn,
+		uint256 redeemFee,
+		uint64 gasDrop,
+		bytes32 destAddr,
+		CctpRecipient memory recipient
+	) public nonReentrant returns (uint64 cctpNonce) {
 		require(paused == false, 'contract is paused');
 		require(recipient.destDomain != SOLANA_DOMAIN, 'invalid dest domain'); // solana is not supported for locking
 
@@ -198,39 +208,39 @@ contract MayanCircle is ReentrancyGuard {
 		});
 	}
 
-	function swap(
-		address tokenIn,
-		uint256 amountIn,
-		uint64 redeemFee,
-		uint64 gasDrop,
+	function createOrder(
 		OrderParams memory params,
 		CctpRecipient memory recipient,
 		bytes memory customPayload
 	) public payable nonReentrant {
 		require(paused == false, 'contract is paused');
 
-		uint256 burnAmount = IERC20(tokenIn).balanceOf(address(this));
-		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-		burnAmount = IERC20(tokenIn).balanceOf(address(this)) - burnAmount;
+		if (params.tokenOut == bytes32(0)) {
+			require(params.gasDrop == 0, 'invalid gas drop');
+		}
 
-		SafeERC20.safeApprove(IERC20(tokenIn), address(cctpTokenMessenger), burnAmount);
-		uint64 ccptNonce = cctpTokenMessenger.depositForBurnWithCaller(burnAmount, recipient.destDomain, recipient.mintRecipient, tokenIn, recipient.callerAddr);
+		uint256 burnAmount = IERC20(params.tokenIn).balanceOf(address(this));
+		IERC20(params.tokenIn).safeTransferFrom(msg.sender, address(this), params.amountIn);
+		burnAmount = IERC20(params.tokenIn).balanceOf(address(this)) - burnAmount;
+
+		SafeERC20.safeApprove(IERC20(params.tokenIn), address(cctpTokenMessenger), burnAmount);
+		uint64 ccptNonce = cctpTokenMessenger.depositForBurnWithCaller(burnAmount, recipient.destDomain, recipient.mintRecipient, params.tokenIn, recipient.callerAddr);
 
 		Order memory order = Order({
 			trader: bytes32(uint256(uint160(msg.sender))),
 			sourceChain: wormhole.chainId(),
-			tokenIn: bytes32(uint256(uint160(tokenIn))),
+			tokenIn: bytes32(uint256(uint160(params.tokenIn))),
 			amountIn: uint64(burnAmount),
 			destAddr: params.destAddr,
 			destChain: params.destChain,
 			tokenOut: params.tokenOut,
 			minAmountOut: params.minAmountOut,
-			gasDrop: gasDrop,
-			redeemFee: redeemFee,
+			gasDrop: params.gasDrop,
+			redeemFee: params.redeemFee,
 			deadline: params.deadline,
 			refAddr: params.refAddr,
 			referrerBps: params.referrerBps,
-			protocolBps: feeManager.calcProtocolBps(uint64(burnAmount), tokenIn, params.tokenOut, params.destChain, params.referrerBps)
+			protocolBps: feeManager.calcProtocolBps(uint64(burnAmount), params.tokenIn, params.tokenOut, params.destChain, params.referrerBps)
 		});
 		
 		bytes memory encodedOrder = encodeOrder(order);
