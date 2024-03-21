@@ -185,9 +185,8 @@ contract MayanCircle is ReentrancyGuard {
 	function bridgeWithLockedFee(
 		address tokenIn,
 		uint256 amountIn,
-		uint256 redeemFee,
 		uint64 gasDrop,
-		bytes32 destAddr,
+		uint256 redeemFee,
 		CctpRecipient memory recipient
 	) public nonReentrant returns (uint64 cctpNonce) {
 		require(paused == false, 'contract is paused');
@@ -201,7 +200,7 @@ contract MayanCircle is ReentrancyGuard {
 		cctpNonce = cctpTokenMessenger.depositForBurnWithCaller(burnAmount - redeemFee, recipient.destDomain, recipient.mintRecipient, tokenIn, recipient.callerAddr);
 
 		feeStorage[cctpNonce] = FeeLock({
-			destAddr: destAddr,
+			destAddr: recipient.mintRecipient,
 			gasDrop: gasDrop,
 			token: tokenIn,
 			redeemFee: redeemFee
@@ -306,6 +305,7 @@ contract MayanCircle is ReentrancyGuard {
 		address caller = truncateAddress(cctpMsg.toBytes32(84));
 		require(caller == address(this), 'invalid caller');
 		address mintRecipient = truncateAddress(cctpMsg.toBytes32(152));
+		require(mintRecipient != address(this), 'invalid mint recipient');
 
 		bool success = cctpTokenMessenger.localMessageTransmitter().receiveMessage(cctpMsg, cctpSigs);
 		require(success, 'invalid cctp msg');
