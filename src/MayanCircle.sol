@@ -243,7 +243,7 @@ contract MayanCircle is ReentrancyGuard {
 		});
 		
 		bytes memory encodedOrder = encodeOrder(order);
-		encodedOrder = abi.encodePacked(ccptNonce, cctpTokenMessenger.localMessageTransmitter().localDomain());
+		encodedOrder = encodedOrder.concat(abi.encodePacked(ccptNonce, cctpTokenMessenger.localMessageTransmitter().localDomain()));
 
 		bytes32 orderHash = keccak256(encodedOrder);
 		OrderMsg memory orderMsg = OrderMsg({
