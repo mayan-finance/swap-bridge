@@ -16,18 +16,18 @@ contract MayanCircle is ReentrancyGuard {
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
 
-	IWormhole wormhole;
-	ITokenMessenger cctpTokenMessenger;
-	IFeeManager feeManager;
+	IWormhole public immutable wormhole;
+	ITokenMessenger public immutable cctpTokenMessenger;
+	IFeeManager public feeManager;
 
 	uint32 public immutable localDomain;
 	uint16 public immutable auctionChainId;
 	bytes32 public immutable auctionAddr;
 	bytes32 public immutable solanaEmitter;
-	uint8 consistencyLevel;
-	address guardian;
+	uint8 public consistencyLevel;
+	address public guardian;
 	address nextGuardian;
-	bool paused;
+	bool public paused;
 
 	mapping(uint64 => FeeLock) public feeStorage;
 
