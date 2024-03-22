@@ -531,6 +531,11 @@ contract MayanCircle is ReentrancyGuard {
 		return address(uint160(uint256(b)));
 	}
 
+	function setFeeManager(address _feeManager) public {
+		require(msg.sender == guardian, 'only guardian');
+		feeManager = IFeeManager(_feeManager);
+	}	
+
 	function setConsistencyLevel(uint8 _consistencyLevel) public {
 		require(msg.sender == guardian, 'only guardian');
 		consistencyLevel = _consistencyLevel;

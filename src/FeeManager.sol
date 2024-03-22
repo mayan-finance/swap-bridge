@@ -22,7 +22,11 @@ contract FeeManager is IFeeManager {
 		uint16 destChain,
 		uint8 referrerBps
 	) external view override returns (uint8 protocolBps) {
-		return 0;
+		if (tokenOut == bytes32(0)) {
+			return 3;
+		} else {
+			return 0;
+		}
 	}
 
 	function feeCollector() external view override returns (address) {
