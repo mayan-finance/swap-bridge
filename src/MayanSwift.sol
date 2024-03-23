@@ -158,9 +158,9 @@ contract MayanSwift is ReentrancyGuard {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
+		require(params.referrerBps <= 50, 'invalid referrer bps');
 		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, address(0), params.tokenOut, params.destChainId, params.referrerBps);
 		require(protocolBps <= 50, 'invalid protocol bps');
-		require(params.referrerBps <= 50, 'invalid referrer bps');
 
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(msg.sender))),
@@ -206,9 +206,9 @@ contract MayanSwift is ReentrancyGuard {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
+		require(params.referrerBps <= 50, 'invalid referrer bps');
 		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
 		require(protocolBps <= 50, 'invalid protocol bps');
-		require(params.referrerBps <= 50, 'invalid referrer bps');
 
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(msg.sender))),
@@ -261,9 +261,9 @@ contract MayanSwift is ReentrancyGuard {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
+		require(params.referrerBps <= 50, 'invalid referrer bps');
 		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
 		require(protocolBps <= 50, 'invalid protocol bps');
-		require(params.referrerBps <= 50, 'invalid referrer bps');
 
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(transferParams.from))),

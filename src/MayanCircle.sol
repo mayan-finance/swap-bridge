@@ -225,6 +225,10 @@ contract MayanCircle is ReentrancyGuard {
 		SafeERC20.safeApprove(IERC20(params.tokenIn), address(cctpTokenMessenger), burnAmount);
 		uint64 ccptNonce = cctpTokenMessenger.depositForBurnWithCaller(burnAmount, recipient.destDomain, recipient.mintRecipient, params.tokenIn, recipient.callerAddr);
 
+		require(params.referrerBps <= 50, 'invalid referrer bps');
+		uint8 protocolBps = feeManager.calcProtocolBps(uint64(burnAmount), params.tokenIn, params.tokenOut, params.destChain, params.referrerBps);
+		require(protocolBps <= 50, 'invalid protocol bps');
+
 		Order memory order = Order({
 			trader: bytes32(uint256(uint160(msg.sender))),
 			sourceChain: wormhole.chainId(),
@@ -239,7 +243,7 @@ contract MayanCircle is ReentrancyGuard {
 			deadline: params.deadline,
 			refAddr: params.refAddr,
 			referrerBps: params.referrerBps,
-			protocolBps: feeManager.calcProtocolBps(uint64(burnAmount), params.tokenIn, params.tokenOut, params.destChain, params.referrerBps)
+			protocolBps: protocolBps
 		});
 		
 		bytes memory encodedOrder = encodeOrder(order);
