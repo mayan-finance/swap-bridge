@@ -38,7 +38,7 @@ contract MayanSwift is ReentrancyGuard {
 	bytes32 private domainSeparator;
 
 	mapping(bytes32 => Order) private orders;
-	mapping(bytes32 => bytes) public unlockMsgs;
+	mapping(bytes32 => UnlockMsg) public unlockMsgs;
 
 	struct Order {
 		bytes32 destEmitter;
@@ -341,7 +341,7 @@ contract MayanSwift is ReentrancyGuard {
 		);
 
 		UnlockMsg memory unlockMsg = UnlockMsg({
-			action: 2,
+			action: uint8(Action.UNLOCK),
 			orderHash: fulfillMsg.orderHash,
 			srcChainId: fulfillMsg.srcChainId,
 			tokenIn: fulfillMsg.tokenIn,
@@ -349,11 +349,10 @@ contract MayanSwift is ReentrancyGuard {
 			recipient: recepient
 		});
 
-		bytes memory encoded = encodeUnlockMsg(unlockMsg);
-
 		if (batch) {
-			unlockMsgs[fulfillMsg.orderHash] = encoded;
+			unlockMsgs[fulfillMsg.orderHash] = unlockMsg;
 		} else {
+			bytes memory encoded = encodeUnlockMsg(unlockMsg);
 			sequence = wormhole.publishMessage{
 				value : wormhole.messageFee()
 			}(0, encoded, consistencyLevel);
@@ -405,7 +404,7 @@ contract MayanSwift is ReentrancyGuard {
 		);
 
 		UnlockMsg memory unlockMsg = UnlockMsg({
-			action: 2,
+			action: uint8(Action.UNLOCK),
 			orderHash: computedOrderHash,
 			srcChainId: key.srcChainId,
 			tokenIn: key.tokenIn,
@@ -413,11 +412,10 @@ contract MayanSwift is ReentrancyGuard {
 			recipient: key.trader
 		});
 
-		bytes memory encoded = encodeUnlockMsg(unlockMsg);
-
 		if (batch) {
-			unlockMsgs[computedOrderHash] = encoded;
+			unlockMsgs[computedOrderHash] = unlockMsg;
 		} else {
+			bytes memory encoded = encodeUnlockMsg(unlockMsg);
 			sequence = wormhole.publishMessage{
 				value : wormhole.messageFee()
 			}(0, encoded, consistencyLevel);
@@ -509,9 +507,9 @@ contract MayanSwift is ReentrancyGuard {
 	function postBatch(bytes32[] memory orderHashes) public payable returns (uint64 sequence) {
 		bytes memory encoded = abi.encodePacked(uint8(Action.BATCH_UNLOCK), uint8(orderHashes.length));
 		for(uint i=0; i<orderHashes.length; i++) {
-			bytes memory msg = unlockMsgs[orderHashes[i]];
-			require(msg.length > 0, 'invalid order hash');
-			encoded = abi.encodePacked(encoded, unlockMsgs[orderHashes[i]]);
+			UnlockMsg memory unlockMsg = unlockMsgs[orderHashes[i]];
+			require(unlockMsg.action == uint8(Action.UNLOCK), 'invalid order hash');
+			encoded = abi.encodePacked(encoded, encodeUnlockMsg(unlockMsg));
 		}
 		
 		sequence = wormhole.publishMessage{
