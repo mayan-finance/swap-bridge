@@ -191,6 +191,7 @@ contract MayanCircle is ReentrancyGuard {
 	) public nonReentrant returns (uint64 cctpNonce) {
 		require(paused == false, 'contract is paused');
 		require(recipient.destDomain != SOLANA_DOMAIN, 'invalid dest domain'); // solana is not supported for locking
+		require(redeemFee > 0, 'zero redeem fee');
 
 		uint256 burnAmount = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
