@@ -158,7 +158,7 @@ contract MayanCircle is ReentrancyGuard {
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 		burnAmount = IERC20(tokenIn).balanceOf(address(this)) - burnAmount;
 
-		SafeERC20.safeApprove(IERC20(tokenIn), address(cctpTokenMessenger), burnAmount);
+		maxApproveIfNeeded(tokenIn, address(cctpTokenMessenger), burnAmount);
 		uint64 ccptNonce = cctpTokenMessenger.depositForBurnWithCaller(burnAmount, recipient.destDomain, recipient.mintRecipient, tokenIn, recipient.callerAddr);
 
 		BridgeWithFeeMsg memory	bridgeMsg = BridgeWithFeeMsg({
@@ -197,7 +197,7 @@ contract MayanCircle is ReentrancyGuard {
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 		burnAmount = IERC20(tokenIn).balanceOf(address(this)) - burnAmount;
 
-		SafeERC20.safeApprove(IERC20(tokenIn), address(cctpTokenMessenger), burnAmount - redeemFee);
+		maxApproveIfNeeded(tokenIn, address(cctpTokenMessenger), burnAmount - redeemFee);
 		cctpNonce = cctpTokenMessenger.depositForBurnWithCaller(burnAmount - redeemFee, recipient.destDomain, recipient.mintRecipient, tokenIn, recipient.callerAddr);
 
 		feeStorage[cctpNonce] = FeeLock({
@@ -223,7 +223,7 @@ contract MayanCircle is ReentrancyGuard {
 		IERC20(params.tokenIn).safeTransferFrom(msg.sender, address(this), params.amountIn);
 		burnAmount = IERC20(params.tokenIn).balanceOf(address(this)) - burnAmount;
 
-		SafeERC20.safeApprove(IERC20(params.tokenIn), address(cctpTokenMessenger), burnAmount);
+		maxApproveIfNeeded(params.tokenIn, address(cctpTokenMessenger), burnAmount);
 		uint64 ccptNonce = cctpTokenMessenger.depositForBurnWithCaller(burnAmount, recipient.destDomain, recipient.mintRecipient, params.tokenIn, recipient.callerAddr);
 
 		require(params.referrerBps <= 50, 'invalid referrer bps');
@@ -510,6 +510,16 @@ contract MayanCircle is ReentrancyGuard {
 			orderMsg.payloadId,
 			orderMsg.orderHash
 		);
+	}
+
+	function maxApproveIfNeeded(address tokenAddr, address spender, uint256 amount) internal {
+		IERC20 token = IERC20(tokenAddr);
+		uint256 currentAllowance = token.allowance(address(this), spender);
+
+		if (currentAllowance < amount) {
+			token.safeApprove(spender, 0);
+			token.safeApprove(spender, type(uint256).max);
+		}
 	}
 
 	function decimalsOf(address token) internal view returns(uint8) {
