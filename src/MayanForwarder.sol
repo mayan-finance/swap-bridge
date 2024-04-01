@@ -2,14 +2,17 @@
 
 pragma solidity ^0.8.0;
 
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import "./libs/BytesLib.sol";
 
 
-contract MayanForwarder {
+contract MayanForwarder is ReentrancyGuard {
 
 	using SafeERC20 for IERC20;
+	using BytesLib for bytes;
 
 	bool public paused;
 	address public guardian;
@@ -43,7 +46,7 @@ contract MayanForwarder {
 		uint256 minMiddleAmount,
 		address mayanProtocol,
 		bytes calldata mayanData
-	) external payable {
+	) nonReentrant external payable {
 		require(middleToken != address(0), "MayanForwarder: middleToken must be different from address(0)");
 
 		require(swapProtocols[swapProtocol], "MayanForwarder: unsupported protocol");
@@ -69,7 +72,7 @@ contract MayanForwarder {
 		uint256 minMiddleAmount,
 		address mayanProtocol,
 		bytes calldata mayanData
-	) external payable {
+	) nonReentrant external payable {
 		require(tokenIn != middleToken, "MayanForwarder: tokenIn and tokenOut must be different");
 		if (permitParams.value > 0) {
 			execPermit(address(this), tokenIn, msg.sender, permitParams);
