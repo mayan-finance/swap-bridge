@@ -14,6 +14,8 @@ contract MayanForwarder is ReentrancyGuard {
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
 
+	event Forwarded(uint256 amount);
+
 	bool public paused;
 	address public guardian;
 	address public nextGuardian;
@@ -60,7 +62,8 @@ contract MayanForwarder is ReentrancyGuard {
 		maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
 		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(mayanData);
 		require(success, string(returnedData));
-	}    
+		emit Forwarded(middleAmount);
+	}
 
 	function forwardERC20(
 		address tokenIn,
@@ -92,6 +95,7 @@ contract MayanForwarder is ReentrancyGuard {
 		maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
 		(success, returnedData) = mayanProtocol.call{value: msg.value}(mayanData);
 		require(success, string(returnedData));
+		emit Forwarded(middleAmount);
 	}
 
 	function maxApproveIfNeeded(address tokenAddr, address spender, uint256 amount) internal {
