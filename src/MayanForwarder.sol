@@ -49,6 +49,7 @@ contract MayanForwarder is ReentrancyGuard {
 		address mayanProtocol,
 		bytes calldata mayanData
 	) nonReentrant external payable {
+		require(!paused, "MayanForwarder: paused");
 		require(middleToken != address(0), "MayanForwarder: middleToken must be different from address(0)");
 
 		require(swapProtocols[swapProtocol], "MayanForwarder: unsupported protocol");
@@ -60,7 +61,9 @@ contract MayanForwarder is ReentrancyGuard {
 
 		require(mayanProtocols[mayanProtocol], "MayanForwarder: unsupported protocol");
 		maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
-		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(mayanData);
+
+        bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
+		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(modifiedData);
 		require(success, string(returnedData));
 		emit Forwarded(middleAmount);
 	}
@@ -76,6 +79,7 @@ contract MayanForwarder is ReentrancyGuard {
 		address mayanProtocol,
 		bytes calldata mayanData
 	) nonReentrant external payable {
+		require(!paused, "MayanForwarder: paused");
 		require(tokenIn != middleToken, "MayanForwarder: tokenIn and tokenOut must be different");
 		if (permitParams.value > 0) {
 			execPermit(address(this), tokenIn, msg.sender, permitParams);
@@ -93,9 +97,35 @@ contract MayanForwarder is ReentrancyGuard {
 
 		require(mayanProtocols[mayanProtocol], "MayanForwarder: unsupported protocol");
 		maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
-		(success, returnedData) = mayanProtocol.call{value: msg.value}(mayanData);
+
+		bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
+		(success, returnedData) = mayanProtocol.call{value: msg.value}(modifiedData);
 		require(success, string(returnedData));
 		emit Forwarded(middleAmount);
+	}
+
+	function replaceMiddleAmount(bytes calldata mayanData, uint256 middleAmount) internal pure returns(bytes memory) {
+		require(mayanData.length >= 68, "Mayan data too short");
+		bytes memory modifiedData = new bytes(mayanData.length);
+
+        // Copy the function selector and token in
+        for (uint i = 0; i < 36; i++) {
+            modifiedData[i] = mayanData[i];
+        }
+
+        // Encode the amount and place it into the modified call data
+        // Starting from byte 36 to byte 67 (32 bytes for uint256)
+        bytes memory encodedAmount = abi.encode(middleAmount);
+        for (uint i = 0; i < 32; i++) {
+            modifiedData[i + 36] = encodedAmount[i];
+        }
+
+        // Copy the rest of the original data after the first argument
+        for (uint i = 68; i < mayanData.length; i++) {
+            modifiedData[i] = mayanData[i];
+        }
+
+		return modifiedData;
 	}
 
 	function maxApproveIfNeeded(address tokenAddr, address spender, uint256 amount) internal {
@@ -132,6 +162,11 @@ contract MayanForwarder is ReentrancyGuard {
 
 	function isPaused() public view returns(bool) {
 		return paused;
+	}
+
+	function rescueToken(address token, uint256 amount, address to) public {
+		require(msg.sender == guardian, 'only guardian');
+		IERC20(token).safeTransfer(to, amount);
 	}
 
 	function changeGuardian(address newGuardian) public {
