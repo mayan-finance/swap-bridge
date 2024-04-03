@@ -121,7 +121,25 @@ contract MayanCircle is ReentrancyGuard {
 		bytes32 unlockerAddr;
 		uint64 gasDrop;
 		bytes32 destAddr;
-	}	
+	}
+
+	struct FulfillMsg {
+		uint8 action;
+		uint8 payloadId;
+		uint16 destChainId;
+		bytes32 destAddr;
+		bytes32 driver;
+		bytes32 tokenOut;
+		uint64 amount;
+		uint64 gasDrop;
+		bytes32 referrerAddr;
+		uint8 referrerBps;
+		uint8 protocolBps;
+		uint64 deadline;
+		uint64 redeemFee;
+		uint32 cctpDomain;
+		uint64 cctpNonce;
+	}
 
 	constructor(
 		address _cctpTokenMessenger,
@@ -415,6 +433,156 @@ contract MayanCircle is ReentrancyGuard {
 		delete feeStorage[unlockMsg.cctpNonce];
 	}
 
+	function fulfillOrder(
+		bytes memory cctpMsg,
+		bytes memory cctpSigs,
+		bytes memory encodedVm,
+		address swapProtocol,
+		bytes memory swapData
+	) public nonReentrant payable {
+		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+		require(valid, reason);
+
+		require(vm.emitterChainId == SOLANA_CHAIN_ID, 'invalid emitter chain');
+		require(vm.emitterAddress == solanaEmitter, 'invalid solana emitter');
+
+		FulfillMsg memory fulfillMsg = parseFulfillMsg(vm.payload);
+		require(fulfillMsg.deadline >= block.timestamp, 'deadline passed');
+		require(msg.sender == truncateAddress(fulfillMsg.driver), 'invalid driver');
+
+		uint32 cctpSourceDomain = cctpMsg.toUint32(4);
+		uint64 cctpNonce = cctpMsg.toUint64(12);
+		bytes32 cctpSourceToken = cctpMsg.toBytes32(120);
+
+		require(cctpSourceDomain == fulfillMsg.cctpDomain, 'invalid cctp domain');
+		require(cctpNonce == fulfillMsg.cctpNonce, 'invalid cctp nonce');
+
+		(address localToken, uint256 cctpAmount) = receiveCctp(cctpMsg, cctpSigs, cctpSourceDomain, cctpSourceToken);
+
+		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
+		maxApproveIfNeeded(localToken, swapProtocol, cctpAmount);
+
+		uint256 amountOut;
+		if (tokenOut == address(0)) {
+			amountOut = address(this).balance;
+		} else {
+			amountOut = IERC20(tokenOut).balanceOf(address(this));
+		}
+
+		(bool swapSuccess, bytes memory swapReturn) = swapProtocol.call{value: 0}(swapData);
+		require(swapSuccess, string(swapReturn));
+
+		if (tokenOut == address(0)) {
+			amountOut = address(this).balance - amountOut;
+		} else {
+			amountOut = IERC20(tokenOut).balanceOf(address(this)) - amountOut;
+		}
+
+		uint8 decimals;
+		if (tokenOut == address(0)) {
+			decimals = ETH_DECIMALS;
+		} else {
+			decimals = decimalsOf(tokenOut);
+		}
+
+		uint256 amount = deNormalizeAmount(fulfillMsg.amount, decimals);
+		require(amountOut >= amount, 'insufficient amount out');
+
+		makePayments(
+			fulfillMsg,
+			tokenOut,
+			amountOut
+		);
+	}
+
+	function refund(
+		bytes memory cctpMsg,
+		bytes memory cctpSigs,
+		bytes memory encodedVm
+	) public nonReentrant payable {
+		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+		require(valid, reason);
+
+		require(vm.emitterChainId == SOLANA_CHAIN_ID, 'invalid emitter chain');
+		require(vm.emitterAddress == solanaEmitter, 'invalid solana emitter');
+
+		FulfillMsg memory fulfillMsg = parseFulfillMsg(vm.payload);
+		require(fulfillMsg.deadline < block.timestamp, 'deadline not passed');
+
+		uint256 gasDrop = deNormalizeAmount(fulfillMsg.gasDrop, ETH_DECIMALS);
+		require(msg.value == gasDrop, 'invalid gas drop');
+
+		uint32 cctpSourceDomain = cctpMsg.toUint32(4);
+		uint64 cctpNonce = cctpMsg.toUint64(12);
+		bytes32 cctpSourceToken = cctpMsg.toBytes32(120);
+
+		require(cctpSourceDomain == localDomain, 'invalid cctp domain');
+		require(cctpNonce == vm.sequence, 'invalid cctp nonce');
+
+		address localToken = cctpTokenMessenger.localMinter().getLocalToken(cctpSourceDomain, cctpSourceToken);
+		require(localToken != address(0), 'invalid local token');
+
+		uint256 amount = IERC20(localToken).balanceOf(address(this));
+		bool success = cctpTokenMessenger.localMessageTransmitter().receiveMessage(cctpMsg, cctpSigs);
+		require(success, 'invalid cctp msg');
+		amount = IERC20(localToken).balanceOf(address(this)) - amount;
+
+		IERC20(localToken).safeTransfer(msg.sender, fulfillMsg.redeemFee);
+		IERC20(localToken).safeTransfer(truncateAddress(fulfillMsg.destAddr), amount - fulfillMsg.redeemFee);
+	}
+
+	function receiveCctp(bytes memory cctpMsg, bytes memory cctpSigs, uint32 cctpSourceDomain, bytes32 cctpSourceToken) internal returns (address, uint256) {
+		address localToken = cctpTokenMessenger.localMinter().getLocalToken(cctpSourceDomain, cctpSourceToken);
+		require(localToken != address(0), 'invalid local token');
+
+		uint256 amount = IERC20(localToken).balanceOf(address(this));
+		bool success = cctpTokenMessenger.localMessageTransmitter().receiveMessage(cctpMsg, cctpSigs);
+		require(success, 'invalid cctp msg');
+		amount = IERC20(localToken).balanceOf(address(this)) - amount;
+		return (localToken, amount);
+	}
+
+	function makePayments(
+		FulfillMsg memory fulfillMsg,
+		address tokenOut,
+		uint256 amount
+		) internal {
+		address referrerAddr = truncateAddress(fulfillMsg.referrerAddr);
+		uint256 referrerAmount = 0;
+		if (referrerAddr != address(0) && fulfillMsg.referrerBps != 0) {
+			referrerAmount = amount * fulfillMsg.referrerBps / 10000;
+		}
+
+		uint256 protocolAmount = 0;
+		if (fulfillMsg.protocolBps != 0) {
+			protocolAmount = amount * fulfillMsg.protocolBps / 10000;
+		}
+
+		address destAddr = truncateAddress(fulfillMsg.destAddr);
+		if (tokenOut == address(0)) {
+			if (referrerAmount > 0) {
+				payable(referrerAddr).transfer(referrerAmount);
+			}
+			if (protocolAmount > 0) {
+				payable(feeManager.feeCollector()).transfer(protocolAmount);
+			}
+			payable(destAddr).transfer(amount - referrerAmount - protocolAmount);
+		} else {
+			if (fulfillMsg.gasDrop > 0) {
+				uint256 gasDrop = deNormalizeAmount(fulfillMsg.gasDrop, ETH_DECIMALS);
+				require(msg.value == gasDrop, 'invalid gas drop');
+				payable(destAddr).transfer(gasDrop);
+			}
+			if (referrerAmount > 0) {
+				IERC20(tokenOut).safeTransferFrom(msg.sender, referrerAddr, referrerAmount);
+			}
+			if (protocolAmount > 0) {
+				IERC20(tokenOut).safeTransferFrom(msg.sender, feeManager.feeCollector(), protocolAmount);
+			}
+			IERC20(tokenOut).safeTransferFrom(msg.sender, destAddr, amount - referrerAmount - protocolAmount);
+		}
+	}
+
 	function encodeBridgeWithFee(BridgeWithFeeMsg memory bridgeMsg) internal pure returns (bytes memory) {
 		return abi.encodePacked(
 			bridgeMsg.action,
@@ -460,6 +628,61 @@ contract MayanCircle is ReentrancyGuard {
 			unlockMsg.gasDrop,
 			unlockMsg.destAddr
 		);
+	}
+
+	function parseFulfillMsg(bytes memory encoded) public pure returns (FulfillMsg memory fulfillMsg) {
+		uint index = 0;
+
+		fulfillMsg.action = encoded.toUint8(index);
+		index += 1;
+
+		require(fulfillMsg.action == uint8(Action.FULFILL), 'invalid action');
+
+		fulfillMsg.payloadId = encoded.toUint8(index);
+		index += 1;
+
+		fulfillMsg.destChainId = encoded.toUint16(index);
+		index += 2;
+
+		fulfillMsg.destAddr = encoded.toBytes32(index);
+		index += 32;
+
+		fulfillMsg.driver = encoded.toBytes32(index);
+		index += 32;
+
+		fulfillMsg.tokenOut = encoded.toBytes32(index);
+		index += 32;
+
+		fulfillMsg.amount = encoded.toUint64(index);
+		index += 8;
+
+		fulfillMsg.gasDrop = encoded.toUint64(index);
+		index += 8;
+
+		fulfillMsg.referrerAddr = encoded.toBytes32(index);
+		index += 32;
+
+		fulfillMsg.referrerBps = encoded.toUint8(index);
+		index += 1;
+
+		fulfillMsg.protocolBps = encoded.toUint8(index);
+		index += 1;
+
+		fulfillMsg.deadline = encoded.toUint64(index);
+		index += 8;
+
+		fulfillMsg.redeemFee = encoded.toUint64(index);
+		index += 8;
+
+		fulfillMsg.cctpDomain = encoded.toUint32(index);
+		index += 4;
+
+		fulfillMsg.cctpNonce = encoded.toUint64(index);
+		index += 8;
+
+		if (fulfillMsg.payloadId == 1) {
+			require(index == encoded.length, 'invalid payload length');
+		}
 	}
 
 	function parseUnlockFeeMsg(bytes memory payload) internal pure returns (UnlockFeeMsg memory) {
@@ -565,6 +788,17 @@ contract MayanCircle is ReentrancyGuard {
 		return paused;
 	}
 
+	function rescueToken(address token, uint256 amount, address to) public {
+		require(msg.sender == guardian, 'only guardian');
+		IERC20(token).safeTransfer(to, amount);
+	}
+
+	function rescueEth(uint256 amount, address payable to) public {
+		require(msg.sender == guardian, 'only guardian');
+		require(to != address(0), 'transfer to the zero address');
+		to.transfer(amount);
+	}
+
 	function changeGuardian(address newGuardian) public {
 		require(msg.sender == guardian, 'only guardian');
 		nextGuardian = newGuardian;
@@ -574,4 +808,6 @@ contract MayanCircle is ReentrancyGuard {
 		require(msg.sender == nextGuardian, 'only next guardian');
 		guardian = nextGuardian;
 	}
+
+	receive() external payable {}
 }
