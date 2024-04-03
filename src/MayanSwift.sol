@@ -574,7 +574,7 @@ contract MayanSwift is ReentrancyGuard {
 		emit OrderCanceled(orderHash);
 	}
 
-	function makePayments(bytes32 _destAddr, bytes32 _tokenOut, uint64 _amountPromised, uint64 _gasDrop, bytes32 _referrerAddr, uint64 _referrerBps, uint64 _protocolBps) internal {
+	function makePayments(bytes32 _destAddr, bytes32 _tokenOut, uint64 _amountPromised, uint64 _gasDrop, bytes32 _referrerAddr, uint8 _referrerBps, uint8 _protocolBps) internal {
 		address tokenOut = truncateAddress(_tokenOut);
 		uint8 decimals;
 		if (tokenOut == address(0)) {
