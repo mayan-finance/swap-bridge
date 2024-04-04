@@ -256,7 +256,7 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		IERC20(params.tokenIn).safeTransferFrom(msg.sender, address(this), params.amountIn);
-		maxApproveIfNeeded(params.tokenIn, address(cctpTokenMessenger), burnAmount);
+		maxApproveIfNeeded(params.tokenIn, address(cctpTokenMessenger), params.amountIn);
 		uint64 ccptNonce = cctpTokenMessenger.depositForBurnWithCaller(params.amountIn, recipient.destDomain, recipient.mintRecipient, params.tokenIn, recipient.callerAddr);
 
 		require(params.referrerBps <= 50, 'invalid referrer bps');
@@ -476,7 +476,7 @@ contract MayanCircle is ReentrancyGuard {
 		require(valid, reason);
 
 		require(vm.emitterChainId == SOLANA_CHAIN_ID, 'invalid emitter chain');
-		require(vm.emitterAddress == auctionEmitter, 'invalid solana emitter');
+		require(vm.emitterAddress == auctionAddr, 'invalid solana emitter');
 
 		FulfillMsg memory fulfillMsg = parseFulfillMsg(vm.payload);
 		require(fulfillMsg.deadline >= block.timestamp, 'deadline passed');
@@ -800,7 +800,7 @@ contract MayanCircle is ReentrancyGuard {
 			order.gasDrop,
 			order.redeemFee,
 			order.deadline,
-			order.refAddr,
+			order.referrerAddr,
 			order.referrerBps,
 			order.protocolBps
 		);

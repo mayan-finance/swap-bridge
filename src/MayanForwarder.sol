@@ -61,10 +61,11 @@ contract MayanForwarder {
 		if (!mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
 		}
-		if (permitParams.value > 0) {
-			execPermit(tokenIn, address(this), msg.sender, permitParams);
+		uint256 allowance = IERC20(tokenIn).allowance(msg.sender, address(this));
+		if (allowance < amountIn) {
+			execPermit(tokenIn, msg.sender, address(this), permitParams);
 		}
-		IERC20(tokenIn).safeTransferFrom(tokenIn, address(this), amountIn);
+		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 
 		maxApproveIfNeeded(tokenIn, mayanProtocol, amountIn);
 		(bool success, bytes memory returnedData) = mayanProtocol.call{value: msg.value}(protocolData);
@@ -117,10 +118,12 @@ contract MayanForwarder {
 			revert UnsupportedProtocol();
 		}
 		require(tokenIn != middleToken, "tokenIn and tokenOut must be different");
-		if (permitParams.value > 0) {
-			execPermit(tokenIn, address(this), msg.sender, permitParams);
+
+		uint256 allowance = IERC20(tokenIn).allowance(msg.sender, address(this));
+		if (allowance < amountIn) {
+			execPermit(tokenIn, msg.sender, address(this), permitParams);
 		}
-		IERC20(tokenIn).safeTransferFrom(tokenIn, address(this), amountIn);
+		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 
 		maxApproveIfNeeded(tokenIn, swapProtocol, amountIn);
 		uint256 middleAmount = IERC20(middleToken).balanceOf(address(this));
