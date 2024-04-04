@@ -97,7 +97,7 @@ contract MayanForwarder {
 
 		maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
 
-        bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
+		bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
 		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(modifiedData);
 		require(success, string(returnedData));
 		emit SwapAndForwarded(middleAmount);
@@ -145,22 +145,22 @@ contract MayanForwarder {
 		require(mayanData.length >= 68, "Mayan data too short");
 		bytes memory modifiedData = new bytes(mayanData.length);
 
-        // Copy the function selector and token in
-        for (uint i = 0; i < 36; i++) {
-            modifiedData[i] = mayanData[i];
-        }
+		// Copy the function selector and token in
+		for (uint i = 0; i < 36; i++) {
+			modifiedData[i] = mayanData[i];
+		}
 
-        // Encode the amount and place it into the modified call data
-        // Starting from byte 36 to byte 67 (32 bytes for uint256)
-        bytes memory encodedAmount = abi.encode(middleAmount);
-        for (uint i = 0; i < 32; i++) {
-            modifiedData[i + 36] = encodedAmount[i];
-        }
+		// Encode the amount and place it into the modified call data
+		// Starting from byte 36 to byte 67 (32 bytes for uint256)
+		bytes memory encodedAmount = abi.encode(middleAmount);
+		for (uint i = 0; i < 32; i++) {
+			modifiedData[i + 36] = encodedAmount[i];
+		}
 
-        // Copy the rest of the original data after the first argument
-        for (uint i = 68; i < mayanData.length; i++) {
-            modifiedData[i] = mayanData[i];
-        }
+		// Copy the rest of the original data after the first argument
+		for (uint i = 68; i < mayanData.length; i++) {
+			modifiedData[i] = mayanData[i];
+		}
 
 		return modifiedData;
 	}
