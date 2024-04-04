@@ -2,25 +2,25 @@
 
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "./libs/BytesLib.sol";
 
 
-contract MayanForwarder is ReentrancyGuard {
+contract MayanForwarder {
 
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
 
-	event Forwarded(uint256 amount);
+	event SwapAndForwarded(uint256 amount);
 
-	bool public paused;
 	address public guardian;
 	address public nextGuardian;
 	mapping(address => bool) public swapProtocols;
 	mapping(address => bool) public mayanProtocols;
+
+	error UnsupportedProtocol();
 
 	struct PermitParams {
 		uint256 value;
@@ -41,6 +41,37 @@ contract MayanForwarder is ReentrancyGuard {
 	}
 
 	function forwardEth(
+		address mayanProtocol,
+		bytes calldata protocolData
+	) external payable {
+		if (!mayanProtocols[mayanProtocol]) {
+			revert UnsupportedProtocol();
+		}
+		(bool success, bytes memory returnedData) = mayanProtocol.call{value: msg.value}(protocolData);
+		require(success, string(returnedData));
+	}
+	
+	function forwardERC20(
+		address tokenIn,
+		uint256 amountIn,
+		PermitParams calldata permitParams,
+		address mayanProtocol,
+		bytes calldata protocolData
+		) external payable {
+		if (!mayanProtocols[mayanProtocol]) {
+			revert UnsupportedProtocol();
+		}
+		if (permitParams.value > 0) {
+			execPermit(tokenIn, address(this), msg.sender, permitParams);
+		}
+		IERC20(tokenIn).safeTransferFrom(tokenIn, address(this), amountIn);
+
+		maxApproveIfNeeded(tokenIn, mayanProtocol, amountIn);
+		(bool success, bytes memory returnedData) = mayanProtocol.call{value: msg.value}(protocolData);
+		require(success, string(returnedData));
+	}
+
+	function swapAndForwardEth(
 		uint256 amountIn,
 		address swapProtocol,
 		bytes calldata swapData,
@@ -48,27 +79,30 @@ contract MayanForwarder is ReentrancyGuard {
 		uint256 minMiddleAmount,
 		address mayanProtocol,
 		bytes calldata mayanData
-	) nonReentrant external payable {
-		require(!paused, "MayanForwarder: paused");
-		require(middleToken != address(0), "MayanForwarder: middleToken must be different from address(0)");
+	) external payable {
+		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
+			revert UnsupportedProtocol();
+		}
+		require(middleToken != address(0), "middleToken cannot be zero address");
 
-		require(swapProtocols[swapProtocol], "MayanForwarder: unsupported protocol");
-		require(amountIn >= msg.value, "MayanForwarder: insufficient amountIn");
+		require(msg.value >= amountIn, "insufficient amountIn");
+		uint256 middleAmount = IERC20(middleToken).balanceOf(address(this));
+
 		(bool success, bytes memory returnedData) = swapProtocol.call{value: amountIn}(swapData);
 		require(success, string(returnedData));
-		uint256 middleAmount = IERC20(middleToken).balanceOf(address(this));
+
+		middleAmount = IERC20(middleToken).balanceOf(address(this)) - middleAmount;
 		require(middleAmount >= minMiddleAmount, "MayanForwarder: insufficient middle token amount");
 
-		require(mayanProtocols[mayanProtocol], "MayanForwarder: unsupported protocol");
 		maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
 
         bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
 		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(modifiedData);
 		require(success, string(returnedData));
-		emit Forwarded(middleAmount);
+		emit SwapAndForwarded(middleAmount);
 	}
 
-	function forwardERC20(
+	function swapAndForwardERC20(
 		address tokenIn,
 		uint256 amountIn,
 		PermitParams calldata permitParams,
@@ -78,30 +112,30 @@ contract MayanForwarder is ReentrancyGuard {
 		uint256 minMiddleAmount,
 		address mayanProtocol,
 		bytes calldata mayanData
-	) nonReentrant external payable {
-		require(!paused, "MayanForwarder: paused");
-		require(tokenIn != middleToken, "MayanForwarder: tokenIn and tokenOut must be different");
-		if (permitParams.value > 0) {
-			execPermit(address(this), tokenIn, msg.sender, permitParams);
+	) external payable {
+		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
+			revert UnsupportedProtocol();
 		}
-		uint256 amount = IERC20(tokenIn).balanceOf(address(this));
+		require(tokenIn != middleToken, "tokenIn and tokenOut must be different");
+		if (permitParams.value > 0) {
+			execPermit(tokenIn, address(this), msg.sender, permitParams);
+		}
 		IERC20(tokenIn).safeTransferFrom(tokenIn, address(this), amountIn);
-		amount = IERC20(tokenIn).balanceOf(address(this)) - amount;
 
-		maxApproveIfNeeded(tokenIn, swapProtocol, amount);
-		require(swapProtocols[swapProtocol], "MayanForwarder: unsupported protocol");
+		maxApproveIfNeeded(tokenIn, swapProtocol, amountIn);
+		uint256 middleAmount = IERC20(middleToken).balanceOf(address(this));
+
 		(bool success, bytes memory returnedData) = swapProtocol.call{value: 0}(swapData);
 		require(success, string(returnedData));
-		uint256 middleAmount = IERC20(middleToken).balanceOf(address(this));
-		require(middleAmount >= minMiddleAmount, "MayanForwarder: insufficient middle token amount");
 
-		require(mayanProtocols[mayanProtocol], "MayanForwarder: unsupported protocol");
+		middleAmount = IERC20(middleToken).balanceOf(address(this)) - middleAmount;
+		require(middleAmount >= minMiddleAmount, "insufficient middle token");
+
 		maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
-
 		bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
 		(success, returnedData) = mayanProtocol.call{value: msg.value}(modifiedData);
 		require(success, string(returnedData));
-		emit Forwarded(middleAmount);
+		emit SwapAndForwarded(middleAmount);
 	}
 
 	function replaceMiddleAmount(bytes calldata mayanData, uint256 middleAmount) internal pure returns(bytes memory) {
@@ -153,15 +187,6 @@ contract MayanForwarder is ReentrancyGuard {
 			permitParams.r,
 			permitParams.s
 		);
-	}
-
-	function setPause(bool _pause) public {
-		require(msg.sender == guardian, 'only guardian');
-		paused = _pause;
-	}
-
-	function isPaused() public view returns(bool) {
-		return paused;
 	}
 
 	function rescueToken(address token, uint256 amount, address to) public {
