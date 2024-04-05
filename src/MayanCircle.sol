@@ -35,6 +35,9 @@ contract MayanCircle is ReentrancyGuard {
 	uint32 constant SOLANA_DOMAIN = 5;
 	uint16 constant SOLANA_CHAIN_ID = 1;
 
+	event OrderFulfilled(uint32 sourceDomain, uint64 sourceNonce, uint256 amount);
+	event OrderRefunded(uint32 sourceDomain, uint64 sourceNonce, uint256 amount);
+
 	error Paused();
 	error Unauthorized();
 	error InvalidDomain();
@@ -525,6 +528,8 @@ contract MayanCircle is ReentrancyGuard {
 			tokenOut,
 			amountOut
 		);
+
+		emit OrderFulfilled(cctpSourceDomain, cctpSourceNonce, amountOut);
 	}
 
 	function refund(
@@ -575,6 +580,8 @@ contract MayanCircle is ReentrancyGuard {
 
 		IERC20(localToken).safeTransfer(msg.sender, order.redeemFee);
 		IERC20(localToken).safeTransfer(destAddr, amount - order.redeemFee);
+
+		emit OrderRefunded(cctpSourceDomain, cctpSourceNonce, amount);
 	}
 
 	function receiveCctp(bytes memory cctpMsg, bytes memory cctpSigs, uint32 cctpSourceDomain, bytes32 cctpSourceToken) internal returns (address, uint256) {
