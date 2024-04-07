@@ -634,12 +634,12 @@ contract MayanCircle is ReentrancyGuard {
 				payable(destAddr).transfer(gasDrop);
 			}
 			if (referrerAmount > 0) {
-				IERC20(tokenOut).safeTransferFrom(msg.sender, referrerAddr, referrerAmount);
+				IERC20(tokenOut).safeTransfer(referrerAddr, referrerAmount);
 			}
 			if (protocolAmount > 0) {
-				IERC20(tokenOut).safeTransferFrom(msg.sender, feeManager.feeCollector(), protocolAmount);
+				IERC20(tokenOut).safeTransfer(feeManager.feeCollector(), protocolAmount);
 			}
-			IERC20(tokenOut).safeTransferFrom(msg.sender, destAddr, amount - referrerAmount - protocolAmount);
+			IERC20(tokenOut).safeTransfer(destAddr, amount - referrerAmount - protocolAmount);
 		}
 	}
 
