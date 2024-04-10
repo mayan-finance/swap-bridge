@@ -148,7 +148,7 @@ contract MayanSwift is ReentrancyGuard {
 		));
 	}
 
-	function createOrderWithEth(OrderParams memory params) nonReentrant public payable returns (bytes32 orderHash) {
+	function createOrderWithEth(address trader, OrderParams memory params) nonReentrant public payable returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
@@ -163,7 +163,7 @@ contract MayanSwift is ReentrancyGuard {
 		require(protocolBps <= 50, 'invalid protocol bps');
 
 		Key memory key = Key({
-			trader: bytes32(uint256(uint160(msg.sender))),
+			trader: bytes32(uint256(uint160(trader))),
 			srcChainId: wormhole.chainId(),
 			tokenIn: bytes32(0),
 			amountIn: normlizedAmountIn,
@@ -193,7 +193,7 @@ contract MayanSwift is ReentrancyGuard {
 		emit OrderCreated(orderHash);
 	}
 
-	function createOrderWithToken(address tokenIn, uint256 amountIn, OrderParams memory params) nonReentrant public returns (bytes32 orderHash) {
+	function createOrderWithToken(address tokenIn, uint256 amountIn, address trader, OrderParams memory params) nonReentrant public returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
 
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
@@ -211,7 +211,7 @@ contract MayanSwift is ReentrancyGuard {
 		require(protocolBps <= 50, 'invalid protocol bps');
 
 		Key memory key = Key({
-			trader: bytes32(uint256(uint160(msg.sender))),
+			trader: bytes32(uint256(uint160(trader))),
 			srcChainId: wormhole.chainId(),
 			tokenIn: bytes32(uint256(uint160(tokenIn))),
 			amountIn: normlizedAmountIn,
@@ -497,6 +497,9 @@ contract MayanSwift is ReentrancyGuard {
 			});
 			index += 106;
 			Order memory order = getOrder(unlockMsg.orderHash);
+			if (order.status != Status.CREATED) {
+				continue;
+			}
 			require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
 			require(vm.emitterAddress == order.destEmitter, 'invalid emitter address');
 			unlockOrder(unlockMsg, order);
@@ -571,7 +574,7 @@ contract MayanSwift is ReentrancyGuard {
 		emit OrderCanceled(orderHash);
 	}
 
-	function makePayments(bytes32 _destAddr, bytes32 _tokenOut, uint64 _amountPromised, uint64 _gasDrop, bytes32 _referrerAddr, uint64 _referrerBps, uint64 _protocolBps) internal {
+	function makePayments(bytes32 _destAddr, bytes32 _tokenOut, uint64 _amountPromised, uint64 _gasDrop, bytes32 _referrerAddr, uint8 _referrerBps, uint8 _protocolBps) internal {
 		address tokenOut = truncateAddress(_tokenOut);
 		uint8 decimals;
 		if (tokenOut == address(0)) {
@@ -800,6 +803,14 @@ contract MayanSwift is ReentrancyGuard {
 				order.destEmitter = bytes32(uint256(uint160(address(this))));
 			}
 		}
+	}
+
+	function getOrders(bytes32[] memory orderHashes) public view returns (Order[] memory) {
+		Order[] memory _orders = new Order[](orderHashes.length);
+		for (uint i=0; i<orderHashes.length; i++) {
+			_orders[i] = getOrder(orderHashes[i]);
+		}
+		return _orders;
 	}
 
 	receive() external payable {}
