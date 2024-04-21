@@ -373,7 +373,10 @@ contract MayanSwift is ReentrancyGuard {
 		require(orders[fulfillMsg.orderHash].status == Status.CREATED, 'invalid order status');
 		orders[fulfillMsg.orderHash].status = Status.FULFILLED;
 
-		IERC20(truncateAddress(fulfillMsg.tokenOut)).safeTransferFrom(msg.sender, address(this), fulfillMsg.amountPromised);
+		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
+		if (tokenOut != address(0)) {
+			IERC20(tokenOut).safeTransferFrom(msg.sender, address(this), fulfillMsg.amountPromised);
+		}
 
 		makePayments(
 			fulfillMsg.destAddr,
@@ -417,7 +420,10 @@ contract MayanSwift is ReentrancyGuard {
 	) public nonReentrant payable returns (uint64 sequence) {
 		require(params.auctionMode == uint8(AuctionMode.BYPASS), 'invalid auction mode');
 
-		IERC20(truncateAddress(params.tokenOut)).safeTransferFrom(msg.sender, address(this), params.minAmountOut);
+		address tokenOut = truncateAddress(params.tokenOut);
+		if (tokenOut != address(0)) {
+			IERC20(tokenOut).safeTransferFrom(msg.sender, address(this), params.minAmountOut);
+		}
 
 		Key memory key = Key({
 			trader: trader,
