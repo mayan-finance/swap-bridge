@@ -12,9 +12,9 @@ import "./libs/SignatureVerification.sol";
 
 contract MayanSwift is ReentrancyGuard {
 	event OrderCreated(bytes32 key);
-	event OrderFulfilled(bytes32 key);
+	event OrderFulfilled(bytes32 key, uint64 sequence);
 	event OrderUnlocked(bytes32 key);
-	event OrderCanceled(bytes32 key);
+	event OrderCanceled(bytes32 key, uint64 sequence);
 	event OrderRefunded(bytes32 key);
 
 	using SafeERC20 for IERC20;
@@ -39,7 +39,6 @@ contract MayanSwift is ReentrancyGuard {
 	mapping(bytes32 => UnlockMsg) public unlockMsgs;
 
 	struct Order {
-		bytes32 destEmitter;
 		uint16 destChainId;
 		Status status;
 	}
@@ -58,7 +57,6 @@ contract MayanSwift is ReentrancyGuard {
 		uint8 referrerBps;
 		uint8 auctionMode;
 		bytes32 random;
-		bytes32 destEmitter;
 	}
 
 	struct PermitParams {
@@ -167,9 +165,7 @@ contract MayanSwift is ReentrancyGuard {
 		));
 	}
 
-	function createOrderWithEth(
-		OrderParams memory params
-	) nonReentrant public payable returns (bytes32 orderHash) {
+	function createOrderWithEth(OrderParams memory params) nonReentrant public payable returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
@@ -209,27 +205,20 @@ contract MayanSwift is ReentrancyGuard {
 		require(params.destChainId > 0, 'invalid dest chain id');
 		require(orders[orderHash].destChainId == 0, 'duplicate order hash');
 
-		orders[orderHash].destChainId = params.destChainId;
-		orders[orderHash].status = Status.CREATED;
-		if (params.destEmitter != bytes32(0)) {
-			orders[orderHash].destEmitter = params.destEmitter;
-		}
-
+		orders[orderHash] = Order({
+			status: Status.CREATED,
+			destChainId: params.destChainId
+		});
+		
 		emit OrderCreated(orderHash);
 	}
 
 	function createOrderWithToken(
 		address tokenIn,
 		uint256 amountIn,
-		OrderParams memory params,
-		PermitParams calldata permitParams
+		OrderParams memory params
 	) nonReentrant public returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
-
-		uint256 allowance = IERC20(tokenIn).allowance(msg.sender, address(this));
-		if (allowance < amountIn) {
-			execPermit(tokenIn, msg.sender, address(this), permitParams);
-		}
 
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
@@ -272,14 +261,9 @@ contract MayanSwift is ReentrancyGuard {
 		require(orders[orderHash].destChainId == 0, 'duplicate key');
 
 		orders[orderHash] = Order({
-			destEmitter: params.destEmitter,
-			destChainId: params.destChainId,
-			status: Status.CREATED
+			status: Status.CREATED,
+			destChainId: params.destChainId
 		});
-
-		if (params.destEmitter != bytes32(0)) {
-			orders[orderHash].destEmitter = params.destEmitter;
-		}
 
 		emit OrderCreated(orderHash);
 	}
@@ -288,15 +272,9 @@ contract MayanSwift is ReentrancyGuard {
 		address tokenIn,
 		uint256 amountIn,
 		OrderParams memory params,
-		bytes calldata signedOrderHash,
-		PermitParams calldata permitParams
+		bytes calldata signedOrderHash
 	) nonReentrant public returns (bytes32 orderHash) {
 		require(paused == false, 'contract is paused');
-
-		uint256 allowance = IERC20(tokenIn).allowance(msg.sender, address(this));
-		if (allowance < amountIn) {
-			execPermit(tokenIn, msg.sender, address(this), permitParams);
-		}
 
 		uint256 amount = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
@@ -342,14 +320,9 @@ contract MayanSwift is ReentrancyGuard {
 		require(orders[orderHash].destChainId == 0, 'duplicate key');
 
 		orders[orderHash] = Order({
-			destEmitter: params.destEmitter,
-			destChainId: params.destChainId,
-			status: Status.CREATED
+			status: Status.CREATED,
+			destChainId: params.destChainId
 		});
-
-		if (params.destEmitter != bytes32(0)) {
-			orders[orderHash].destEmitter = params.destEmitter;
-		}
 
 		emit OrderCreated(orderHash);
 	}
@@ -406,7 +379,7 @@ contract MayanSwift is ReentrancyGuard {
 			}(0, encoded, consistencyLevel);
 		}
 
-		emit OrderFulfilled(fulfillMsg.orderHash);
+		emit OrderFulfilled(fulfillMsg.orderHash, sequence);
 	}
 
 	function fulfillSimple(bytes32 orderHash,
@@ -480,7 +453,7 @@ contract MayanSwift is ReentrancyGuard {
 			}(0, encoded, consistencyLevel);
 		}
 
-		emit OrderFulfilled(computedOrderHash);
+		emit OrderFulfilled(computedOrderHash, sequence);
 	}
 
 	function unlockOrder(UnlockMsg memory swift, Order memory order) internal {
@@ -528,7 +501,11 @@ contract MayanSwift is ReentrancyGuard {
 		Order memory order = getOrder(unlockMsg.orderHash);
 
 		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
-		require(vm.emitterAddress == order.destEmitter, 'invalid emitter address');
+		if (vm.emitterChainId == SOLANA_CHAIN_ID) {
+			require(vm.emitterAddress == solanaEmitter, 'invalid solana emitter');
+		} else {
+			require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
+		}
 
 		unlockOrder(unlockMsg, order);
 	}
@@ -559,8 +536,14 @@ contract MayanSwift is ReentrancyGuard {
 			if (order.status != Status.CREATED) {
 				continue;
 			}
+
 			require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
-			require(vm.emitterAddress == order.destEmitter, 'invalid emitter address');
+			if (vm.emitterChainId == SOLANA_CHAIN_ID) {
+				require(vm.emitterAddress == solanaEmitter, 'invalid solana address');
+			} else {
+				require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
+			}
+
 			unlockOrder(unlockMsg, order);
 		}
 		require(index == vm.payload.length, 'invalid payload length');
@@ -629,7 +612,7 @@ contract MayanSwift is ReentrancyGuard {
 			value : msg.value
 		}(0, encoded, consistencyLevel);
 
-		emit OrderCanceled(orderHash);
+		emit OrderCanceled(orderHash, sequence);
 	}
 
 	function makePayments(bytes32 _destAddr, bytes32 _tokenOut, uint64 _amountPromised, uint64 _gasDrop, bytes32 _referrerAddr, uint8 _referrerBps, uint8 _protocolBps) internal {
@@ -870,15 +853,8 @@ contract MayanSwift is ReentrancyGuard {
 		guardian = nextGuardian;
 	}
 
-	function getOrder(bytes32 orderHash) public view returns (Order memory order) {
-		order = orders[orderHash];
-		if (order.destEmitter == bytes32(0)) {
-			if (order.destChainId == SOLANA_CHAIN_ID) {
-				order.destEmitter = solanaEmitter;
-			} else {
-				order.destEmitter = bytes32(uint256(uint160(address(this))));
-			}
-		}
+	function getOrder(bytes32 orderHash) public view returns (Order memory) {
+		return orders[orderHash];
 	}
 
 	function getOrders(bytes32[] memory orderHashes) public view returns (Order[] memory) {
