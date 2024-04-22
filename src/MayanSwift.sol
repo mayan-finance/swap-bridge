@@ -10,7 +10,7 @@ import "./interfaces/IFeeManager.sol";
 import "./libs/BytesLib.sol";
 import "./libs/SignatureVerification.sol";
 
-contract MayanSwift is ReentrancyGuard {
+contract MayanunlockMsg is ReentrancyGuard {
 	event OrderCreated(bytes32 key);
 	event OrderFulfilled(bytes32 key, uint64 sequence);
 	event OrderUnlocked(bytes32 key);
@@ -48,8 +48,8 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 tokenOut;
 		uint64 minAmountOut;
 		uint64 gasDrop;
-		uint64 destRefundFee;
-		uint64 srcRefundFee;
+		uint64 cancelFee;
+		uint64 refundFee;
 		uint64 deadline;
 		bytes32 destAddr;
 		uint16 destChainId;
@@ -75,8 +75,8 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 tokenOut;
 		uint64 minAmountOut;
 		uint64 gasDrop;
-		uint64 destRefundFee;
-		uint64 srcRefundFee;
+		uint64 cancelFee;
+		uint64 refundFee;
 		uint64 deadline;
 		bytes32 destAddr;
 		uint16 destChainId;
@@ -99,7 +99,7 @@ contract MayanSwift is ReentrancyGuard {
 		NONE,
 		FULFILL,
 		UNLOCK,
-		CANCEL,
+		REFUND,
 		BATCH_UNLOCK
 	}
 
@@ -116,6 +116,18 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 tokenIn;
 		uint64 amountIn;
 		bytes32 recipient;
+	}
+
+	struct RefundMsg {
+		uint8 action;
+		bytes32 orderHash;
+		uint16 srcChainId;
+		bytes32 tokenIn;
+		uint64 amountIn;
+		bytes32 recipient;
+		bytes32 canceler;
+		uint64 cancelFee;
+		uint64 refundFee;	
 	}
 
 	struct FulfillMsg {
@@ -159,7 +171,7 @@ contract MayanSwift is ReentrancyGuard {
 
 		domainSeparator = keccak256(abi.encode(
 			keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)"),
-			keccak256("Mayan Swift v1.0"),
+			keccak256("Mayan unlockMsg v1.0"),
 			uint256(IWormhole(_wormhole).chainId()),
 			address(this)
 		));
@@ -187,8 +199,8 @@ contract MayanSwift is ReentrancyGuard {
 			tokenOut: params.tokenOut,
 			minAmountOut: params.minAmountOut,
 			gasDrop: params.gasDrop,
-			destRefundFee: params.destRefundFee,
-			srcRefundFee: params.srcRefundFee,
+			cancelFee: params.cancelFee,
+			refundFee: params.refundFee,
 			deadline: params.deadline,
 			destAddr: params.destAddr,
 			destChainId: params.destChainId,
@@ -242,8 +254,8 @@ contract MayanSwift is ReentrancyGuard {
 			tokenOut: params.tokenOut,
 			minAmountOut: params.minAmountOut,
 			gasDrop: params.gasDrop,
-			destRefundFee: params.destRefundFee,
-			srcRefundFee: params.srcRefundFee,
+			cancelFee: params.cancelFee,
+			refundFee: params.refundFee,
 			deadline: params.deadline,
 			destAddr: params.destAddr,
 			destChainId: params.destChainId,
@@ -299,8 +311,8 @@ contract MayanSwift is ReentrancyGuard {
 			tokenOut: params.tokenOut,
 			minAmountOut: params.minAmountOut,
 			gasDrop: params.gasDrop,
-			destRefundFee: params.destRefundFee,
-			srcRefundFee: params.srcRefundFee,
+			cancelFee: params.cancelFee,
+			refundFee: params.refundFee,
 			deadline: params.deadline,
 			destAddr: params.destAddr,
 			destChainId: params.destChainId,
@@ -382,13 +394,15 @@ contract MayanSwift is ReentrancyGuard {
 		emit OrderFulfilled(fulfillMsg.orderHash, sequence);
 	}
 
-	function fulfillSimple(bytes32 orderHash,
+	function fulfillSimple(
+		bytes32 orderHash,
 		bytes32 trader,
 		uint16 srcChainId,
 		bytes32 tokenIn,
 		uint64 amountIn,
 		uint8 protocolBps,
 		OrderParams memory params,
+		bytes32 recepient,
 		bool batch
 	) public nonReentrant payable returns (uint64 sequence) {
 		require(params.auctionMode == uint8(AuctionMode.BYPASS), 'invalid auction mode');
@@ -406,8 +420,8 @@ contract MayanSwift is ReentrancyGuard {
 			tokenOut: params.tokenOut,
 			minAmountOut: params.minAmountOut,
 			gasDrop: params.gasDrop,
-			destRefundFee: params.destRefundFee,
-			srcRefundFee: params.srcRefundFee,
+			cancelFee: params.cancelFee,
+			refundFee: params.refundFee,
 			deadline: params.deadline,
 			destAddr: params.destAddr,
 			destChainId: wormhole.chainId(),
@@ -441,7 +455,7 @@ contract MayanSwift is ReentrancyGuard {
 			srcChainId: key.srcChainId,
 			tokenIn: key.tokenIn,
 			amountIn: key.amountIn,
-			recipient: key.trader
+			recipient: recepient
 		});
 
 		if (batch) {
@@ -456,21 +470,13 @@ contract MayanSwift is ReentrancyGuard {
 		emit OrderFulfilled(computedOrderHash, sequence);
 	}
 
-	function unlockOrder(UnlockMsg memory swift, Order memory order) internal {
-		require(swift.srcChainId == wormhole.chainId(), 'invalid source chain');
+	function unlockOrder(UnlockMsg memory unlockMsg, Order memory order) internal {
+		require(unlockMsg.srcChainId == wormhole.chainId(), 'invalid source chain');
 		require(order.destChainId > 0, 'order not exists');
 		require(order.status == Status.CREATED, 'order is not created');
-
-		if (swift.action == uint8(Action.UNLOCK)) {
-			orders[swift.orderHash].status = Status.UNLOCKED;
-		} else if (swift.action == uint8(Action.CANCEL)) {
-			orders[swift.orderHash].status = Status.REFUNDED;
-		} else {
-			revert('invalid action');
-		}
 		
-		address recipient = truncateAddress(swift.recipient);
-		address tokenIn = truncateAddress(swift.tokenIn);
+		address recipient = truncateAddress(unlockMsg.recipient);
+		address tokenIn = truncateAddress(unlockMsg.tokenIn);
 		uint8 decimals;
 		if (tokenIn == address(0)) {
 			decimals = 18;
@@ -478,17 +484,115 @@ contract MayanSwift is ReentrancyGuard {
 			decimals = decimalsOf(tokenIn);
 		}
 
-		uint256 amountIn = deNormalizeAmount(swift.amountIn, decimals);
+		uint256 amountIn = deNormalizeAmount(unlockMsg.amountIn, decimals);
 		if (tokenIn == address(0)) {
 			payable(recipient).transfer(amountIn);
 		} else {
 			IERC20(tokenIn).safeTransfer(recipient, amountIn);
 		}
 		
-		if (swift.action == uint8(Action.UNLOCK)) {
-			emit OrderUnlocked(swift.orderHash);
-		} else if (swift.action == uint8(Action.CANCEL)) {
-			emit OrderRefunded(swift.orderHash);
+		emit OrderUnlocked(unlockMsg.orderHash);
+	}
+
+	function cancelOrder(
+		bytes32 tokenIn,
+		uint64 amountIn,
+		OrderParams memory params,
+		bytes32 trader,
+		uint16 srcChainId,
+		uint8 protocolBps,
+		bytes32 canceler
+	) public nonReentrant payable returns (uint64 sequence) {
+		Key memory key = Key({
+			trader: trader,
+			srcChainId: srcChainId,
+			tokenIn: tokenIn,
+			amountIn: amountIn,
+			tokenOut: params.tokenOut,
+			minAmountOut: params.minAmountOut,
+			gasDrop: params.gasDrop,
+			cancelFee: params.cancelFee,
+			refundFee: params.refundFee,
+			deadline: params.deadline,
+			destAddr: trader,
+			destChainId: wormhole.chainId(),
+			referrerAddr: params.referrerAddr,
+			referrerBps: params.referrerBps,
+			protocolBps: protocolBps,
+			auctionMode: params.auctionMode,
+			random: params.random
+		});
+
+		bytes32 orderHash = keccak256(encodeKey(key));
+		Order memory order = orders[orderHash];
+
+		require(order.status == Status.CREATED, 'invalid order status');
+		require(key.deadline < block.timestamp, 'order not expired');
+		orders[orderHash].status = Status.CANCELED;
+
+		RefundMsg memory refundMsg = RefundMsg({
+			action: uint8(Action.REFUND),
+			orderHash: orderHash,
+			srcChainId: key.srcChainId,
+			tokenIn: key.tokenIn,
+			amountIn: key.amountIn,
+			recipient: key.trader,
+			canceler: canceler,
+			cancelFee: key.cancelFee,
+			refundFee: key.refundFee
+		});
+
+		bytes memory encoded = encodeRefundMsg(refundMsg);
+
+		sequence = wormhole.publishMessage{
+			value : msg.value
+		}(0, encoded, consistencyLevel);
+
+		emit OrderCanceled(orderHash, sequence);
+	}
+
+	function refundOrder(bytes memory encodedVm) nonReentrant() public {
+		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+
+		RefundMsg memory refundMsg = parseRefundPayload(vm.payload);
+		require(refundMsg.srcChainId == wormhole.chainId(), 'invalid source chain');
+
+		Order memory order = getOrder(refundMsg.orderHash);
+		require(order.destChainId > 0, 'order not exists');
+		require(order.status == Status.CREATED, 'order is not created');
+
+		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
+		if (vm.emitterChainId == SOLANA_CHAIN_ID) {
+			require(vm.emitterAddress == solanaEmitter, 'invalid solana emitter');
+		} else {
+			require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
+		}
+
+		address recipient = truncateAddress(refundMsg.recipient);
+		address canceler = truncateAddress(refundMsg.canceler);
+		address tokenIn = truncateAddress(refundMsg.tokenIn);
+		
+		uint8 decimals;
+		if (tokenIn == address(0)) {
+			decimals = 18;
+		} else {
+			decimals = decimalsOf(tokenIn);
+		}
+
+		uint256 cancelFee = deNormalizeAmount(refundMsg.cancelFee, decimals);
+		uint256 refundFee = deNormalizeAmount(refundMsg.refundFee, decimals);
+		uint256 amountIn = deNormalizeAmount(refundMsg.amountIn, decimals);
+
+		if (tokenIn == address(0)) {
+			payable(canceler).transfer(cancelFee);
+			payable(msg.sender).transfer(refundFee);
+			payable(recipient).transfer(amountIn - cancelFee - refundFee);
+		} else {
+			IERC20(tokenIn).transfer(canceler, cancelFee);
+			IERC20(tokenIn).transfer(msg.sender, refundFee);
+			IERC20(tokenIn).transfer(recipient, amountIn - cancelFee - refundFee);
 		}
 	}
 
@@ -560,59 +664,6 @@ contract MayanSwift is ReentrancyGuard {
 		sequence = wormhole.publishMessage{
 			value : msg.value
 		}(0, encoded, consistencyLevel);
-	}
-
-	function cancelOrder(
-		bytes32 tokenIn,
-		uint64 amountIn,
-		OrderParams memory params,
-		bytes32 trader,
-		uint16 srcChainId,
-		uint8 protocolBps
-	) public nonReentrant payable returns (uint64 sequence) {
-		Key memory key = Key({
-			trader: trader,
-			srcChainId: srcChainId,
-			tokenIn: tokenIn,
-			amountIn: amountIn,
-			tokenOut: params.tokenOut,
-			minAmountOut: params.minAmountOut,
-			gasDrop: params.gasDrop,
-			destRefundFee: params.destRefundFee,
-			srcRefundFee: params.srcRefundFee,
-			deadline: params.deadline,
-			destAddr: trader,
-			destChainId: wormhole.chainId(),
-			referrerAddr: params.referrerAddr,
-			referrerBps: params.referrerBps,
-			protocolBps: protocolBps,
-			auctionMode: params.auctionMode,
-			random: params.random
-		});
-
-		bytes32 orderHash = keccak256(encodeKey(key));
-		Order memory order = orders[orderHash];
-
-		require(order.status == Status.CREATED, 'invalid order status');
-		require(key.deadline < block.timestamp, 'order not expired');
-		orders[orderHash].status = Status.CANCELED;
-
-		UnlockMsg memory cancelMsg = UnlockMsg({
-			action: 3,
-			orderHash: orderHash,
-			srcChainId: key.srcChainId,
-			tokenIn: key.tokenIn,
-			amountIn: key.amountIn,
-			recipient: key.trader
-		});
-
-		bytes memory encoded = encodeUnlockMsg(cancelMsg);
-
-		sequence = wormhole.publishMessage{
-			value : msg.value
-		}(0, encoded, consistencyLevel);
-
-		emit OrderCanceled(orderHash, sequence);
 	}
 
 	function makePayments(bytes32 _destAddr, bytes32 _tokenOut, uint64 _amountPromised, uint64 _gasDrop, bytes32 _referrerAddr, uint8 _referrerBps, uint8 _protocolBps) internal {
@@ -740,6 +791,8 @@ contract MayanSwift is ReentrancyGuard {
 		unlockMsg.action = encoded.toUint8(index);
 		index += 1;
 
+		require(unlockMsg.action == uint8(Action.UNLOCK), 'invalid action');
+
 		unlockMsg.orderHash = encoded.toBytes32(index);
 		index += 32;
 
@@ -758,6 +811,41 @@ contract MayanSwift is ReentrancyGuard {
 		require(encoded.length == index, 'invalid msg lenght');
 	}
 
+	function parseRefundPayload(bytes memory encoded) public pure returns (RefundMsg memory refundMsg) {
+		uint index = 0;
+
+		refundMsg.action = encoded.toUint8(index);
+		index += 1;
+
+		require(refundMsg.action == uint8(Action.REFUND), 'invalid action');
+
+		refundMsg.orderHash = encoded.toBytes32(index);
+		index += 32;
+
+		refundMsg.srcChainId = encoded.toUint16(index);
+		index += 2;
+
+		refundMsg.tokenIn = encoded.toBytes32(index);
+		index += 32;
+
+		refundMsg.amountIn = encoded.toUint64(index);
+		index += 8;
+
+		refundMsg.recipient = encoded.toBytes32(index);
+		index += 32;
+
+		refundMsg.canceler = encoded.toBytes32(index);
+		index += 32;
+
+		refundMsg.cancelFee = encoded.toUint64(index);
+		index += 8;
+
+		refundMsg.refundFee = encoded.toUint64(index);
+		index += 8;
+
+		require(encoded.length == index, 'invalid msg lenght');
+	}
+
 	function encodeKey(Key memory key) internal pure returns (bytes memory encoded) {
 		encoded = abi.encodePacked(
 			key.trader,
@@ -769,8 +857,8 @@ contract MayanSwift is ReentrancyGuard {
 			key.tokenOut,
 			key.minAmountOut,
 			key.gasDrop,
-			key.destRefundFee,
-			key.srcRefundFee,
+			key.cancelFee,
+			key.refundFee,
 			key.deadline,
 			key.referrerAddr,
 			key.referrerBps
@@ -786,6 +874,20 @@ contract MayanSwift is ReentrancyGuard {
 			unlockMsg.tokenIn,
 			unlockMsg.amountIn,
 			unlockMsg.recipient
+		);
+	}
+
+	function encodeRefundMsg(RefundMsg memory refundMsg) internal pure returns (bytes memory encoded) {
+		encoded = abi.encodePacked(
+			refundMsg.action,
+			refundMsg.orderHash,
+			refundMsg.srcChainId,
+			refundMsg.tokenIn,
+			refundMsg.amountIn,
+			refundMsg.recipient,
+			refundMsg.canceler,
+			refundMsg.cancelFee,
+			refundMsg.refundFee
 		);
 	}
 
