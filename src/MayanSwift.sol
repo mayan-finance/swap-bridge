@@ -10,7 +10,7 @@ import "./interfaces/IFeeManager.sol";
 import "./libs/BytesLib.sol";
 import "./libs/SignatureVerification.sol";
 
-contract MayanunlockMsg is ReentrancyGuard {
+contract MayanSwift is ReentrancyGuard {
 	event OrderCreated(bytes32 key);
 	event OrderFulfilled(bytes32 key, uint64 sequence);
 	event OrderUnlocked(bytes32 key);
