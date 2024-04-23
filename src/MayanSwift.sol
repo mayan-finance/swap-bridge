@@ -22,6 +22,7 @@ contract MayanSwift is ReentrancyGuard {
 	using SignatureVerification for bytes;
 
 	uint16 constant SOLANA_CHAIN_ID = 1;
+	uint8 constant BPS_FEE_LIMIT = 50;
 
 	IWormhole public immutable wormhole;
 	uint16 public immutable auctionChainId;
@@ -37,6 +38,22 @@ contract MayanSwift is ReentrancyGuard {
 
 	mapping(bytes32 => Order) private orders;
 	mapping(bytes32 => UnlockMsg) public unlockMsgs;
+
+
+	error Paused();
+	error Unauthorized();
+	error InvalidAction();
+	error InvalidEmitter();
+	error InvalidReferrerBps();
+	error InvalidProtocolBps();
+	error InvalidOrderStatus();
+	error InvalidOrderHash();
+	error InvalidAuctionChain();
+	error InvalidAuctionAddress();
+	error InvalidEmitterChain();
+	error InvalidEmitterAddress();
+	error InvalidSrcChain();
+	error OrderNotExists();
 
 	struct Order {
 		uint16 destChainId;
@@ -178,7 +195,9 @@ contract MayanSwift is ReentrancyGuard {
 	}
 
 	function createOrderWithEth(OrderParams memory params) nonReentrant public payable returns (bytes32 orderHash) {
-		require(paused == false, 'contract is paused');
+		if (paused) {
+			revert Paused();
+		}
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
 		require(normlizedAmountIn > 0, 'small amount in');
@@ -187,9 +206,13 @@ contract MayanSwift is ReentrancyGuard {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
-		require(params.referrerBps <= 50, 'invalid referrer bps');
+		if (params.referrerBps > BPS_FEE_LIMIT) {
+			revert InvalidReferrerBps();
+		}
 		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, address(0), params.tokenOut, params.destChainId, params.referrerBps);
-		require(protocolBps <= 50, 'invalid protocol bps');
+		if (protocolBps > BPS_FEE_LIMIT) {
+			revert InvalidProtocolBps();
+		}
 
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(params.trader))),
@@ -213,7 +236,6 @@ contract MayanSwift is ReentrancyGuard {
 
 		orderHash = keccak256(encodeKey(key));
 
-		require(params.destChainId != wormhole.chainId(), 'same src and dest chains');
 		require(params.destChainId > 0, 'invalid dest chain id');
 		require(orders[orderHash].destChainId == 0, 'duplicate order hash');
 
@@ -230,7 +252,9 @@ contract MayanSwift is ReentrancyGuard {
 		uint256 amountIn,
 		OrderParams memory params
 	) nonReentrant public returns (bytes32 orderHash) {
-		require(paused == false, 'contract is paused');
+		if (paused) {
+			revert Paused();
+		}
 
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
@@ -242,9 +266,13 @@ contract MayanSwift is ReentrancyGuard {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
-		require(params.referrerBps <= 50, 'invalid referrer bps');
+		if (params.referrerBps > BPS_FEE_LIMIT) {
+			revert InvalidReferrerBps();
+		}
 		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
-		require(protocolBps <= 50, 'invalid protocol bps');
+		if (protocolBps > BPS_FEE_LIMIT) {
+			revert InvalidProtocolBps();
+		}
 
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(params.trader))),
@@ -268,7 +296,6 @@ contract MayanSwift is ReentrancyGuard {
 
 		orderHash = keccak256(encodeKey(key));
 
-		require(params.destChainId != wormhole.chainId(), 'same src and dest chain');
 		require(params.destChainId > 0, 'invalid dest chain id');
 		require(orders[orderHash].destChainId == 0, 'duplicate key');
 
@@ -286,7 +313,9 @@ contract MayanSwift is ReentrancyGuard {
 		OrderParams memory params,
 		bytes calldata signedOrderHash
 	) nonReentrant public returns (bytes32 orderHash) {
-		require(paused == false, 'contract is paused');
+		if (paused) {
+			revert Paused();
+		}
 
 		uint256 amount = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
@@ -299,9 +328,13 @@ contract MayanSwift is ReentrancyGuard {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
 
-		require(params.referrerBps <= 50, 'invalid referrer bps');
+		if (params.referrerBps > BPS_FEE_LIMIT) {
+			revert InvalidReferrerBps();
+		}
 		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
-		require(protocolBps <= 50, 'invalid protocol bps');
+		if (protocolBps > BPS_FEE_LIMIT) {
+			revert InvalidProtocolBps();
+		}
 
 		Key memory key = Key({
 			trader: bytes32(uint256(uint160(params.trader))),
@@ -327,7 +360,6 @@ contract MayanSwift is ReentrancyGuard {
 
 		signedOrderHash.verify(hashTypedData(orderHash), params.trader);
 
-		require(params.destChainId != wormhole.chainId(), 'same src and dest chain');
 		require(params.destChainId > 0, 'invalid dest chain id');
 		require(orders[orderHash].destChainId == 0, 'duplicate key');
 
@@ -347,15 +379,21 @@ contract MayanSwift is ReentrancyGuard {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
-		require(vm.emitterChainId == auctionChainId, 'invalid auction chain');
-		require(vm.emitterAddress == auctionAddr, 'invalid auction address');
+		if (vm.emitterChainId != auctionChainId) {
+			revert InvalidAuctionChain();
+		}
+		if (vm.emitterAddress != auctionAddr) {
+			revert InvalidAuctionAddress();
+		}
 
 		FulfillMsg memory fulfillMsg = parseFulfillPayload(vm.payload);
 
 		require(fulfillMsg.destChainId == wormhole.chainId(), 'wrong chain id');
 		require(truncateAddress(fulfillMsg.driver) == msg.sender, 'invalid driver');
 
-		require(orders[fulfillMsg.orderHash].status == Status.CREATED, 'invalid order status');
+		if (orders[fulfillMsg.orderHash].status != Status.CREATED) {
+			revert InvalidOrderStatus();
+		}
 		orders[fulfillMsg.orderHash].status = Status.FULFILLED;
 
 		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
@@ -434,9 +472,13 @@ contract MayanSwift is ReentrancyGuard {
 
 		bytes32 computedOrderHash = keccak256(encodeKey(key));
 
-		require(computedOrderHash == orderHash, 'invalid order hash');
+		if (computedOrderHash != orderHash) {
+			revert InvalidOrderHash();
+		}
 
-		require(orders[computedOrderHash].status == Status.CREATED, 'invalid order status');
+		if (orders[computedOrderHash].status != Status.CREATED) {
+			revert InvalidOrderStatus();
+		}
 		orders[computedOrderHash].status = Status.FULFILLED;
 
 		makePayments(
@@ -471,9 +513,15 @@ contract MayanSwift is ReentrancyGuard {
 	}
 
 	function unlockOrder(UnlockMsg memory unlockMsg, Order memory order) internal {
-		require(unlockMsg.srcChainId == wormhole.chainId(), 'invalid source chain');
-		require(order.destChainId > 0, 'order not exists');
-		require(order.status == Status.CREATED, 'order is not created');
+		if (unlockMsg.srcChainId != wormhole.chainId()) {
+			revert InvalidSrcChain();
+		}
+		if (order.destChainId == 0) {
+			revert OrderNotExists();
+		}
+		if (order.status != Status.CREATED) {
+			revert InvalidOrderStatus();
+		}
 		
 		address recipient = truncateAddress(unlockMsg.recipient);
 		address tokenIn = truncateAddress(unlockMsg.tokenIn);
@@ -526,7 +574,9 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 orderHash = keccak256(encodeKey(key));
 		Order memory order = orders[orderHash];
 
-		require(order.status == Status.CREATED, 'invalid order status');
+		if (order.status != Status.CREATED) {
+			revert InvalidOrderStatus();
+		}
 		require(key.deadline < block.timestamp, 'order not expired');
 		orders[orderHash].status = Status.CANCELED;
 
@@ -557,17 +607,23 @@ contract MayanSwift is ReentrancyGuard {
 		require(valid, reason);
 
 		RefundMsg memory refundMsg = parseRefundPayload(vm.payload);
-		require(refundMsg.srcChainId == wormhole.chainId(), 'invalid source chain');
-
 		Order memory order = getOrder(refundMsg.orderHash);
-		require(order.destChainId > 0, 'order not exists');
-		require(order.status == Status.CREATED, 'order is not created');
 
-		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
-		if (vm.emitterChainId == SOLANA_CHAIN_ID) {
-			require(vm.emitterAddress == solanaEmitter, 'invalid solana emitter');
-		} else {
-			require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
+		if (refundMsg.srcChainId != wormhole.chainId()) {
+			revert InvalidSrcChain();
+		}
+		if (order.destChainId == 0) {
+			revert OrderNotExists();
+		}
+		if (order.status != Status.CREATED) {
+			revert InvalidOrderStatus();
+		}
+
+		if (vm.emitterChainId != order.destChainId) {
+			revert InvalidEmitterChain();
+		}
+		if (truncateAddress(vm.emitterAddress) != address(this) && vm.emitterAddress != solanaEmitter) {
+			revert InvalidEmitterAddress();
 		}
 
 		address recipient = truncateAddress(refundMsg.recipient);
@@ -604,11 +660,11 @@ contract MayanSwift is ReentrancyGuard {
 		UnlockMsg memory unlockMsg = parseUnlockPayload(vm.payload);
 		Order memory order = getOrder(unlockMsg.orderHash);
 
-		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
-		if (vm.emitterChainId == SOLANA_CHAIN_ID) {
-			require(vm.emitterAddress == solanaEmitter, 'invalid solana emitter');
-		} else {
-			require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
+		if (vm.emitterChainId != order.destChainId) {
+			revert InvalidEmitterChain();
+		}
+		if (truncateAddress(vm.emitterAddress) != address(this) && vm.emitterAddress != solanaEmitter) {
+			revert InvalidEmitterAddress();
 		}
 
 		unlockOrder(unlockMsg, order);
@@ -622,7 +678,9 @@ contract MayanSwift is ReentrancyGuard {
 		uint index = 0;
 		uint8 action = vm.payload.toUint8(0);
 		index += 1; 
-		require(action == uint8(Action.BATCH_UNLOCK), 'invalid action');
+		if (action != uint8(Action.BATCH_UNLOCK)) {
+			revert InvalidAction();
+		}
 
 		uint16 count = vm.payload.toUint8(index);
 		index += 2;
@@ -641,11 +699,11 @@ contract MayanSwift is ReentrancyGuard {
 				continue;
 			}
 
-			require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
-			if (vm.emitterChainId == SOLANA_CHAIN_ID) {
-				require(vm.emitterAddress == solanaEmitter, 'invalid solana address');
-			} else {
-				require(truncateAddress(vm.emitterAddress) == address(this), 'invalid emitter address');
+			if (vm.emitterChainId != order.destChainId) {
+				revert InvalidEmitterChain();
+			}
+			if (truncateAddress(vm.emitterAddress) != address(this) && vm.emitterAddress != solanaEmitter) {
+				revert InvalidEmitterAddress();
 			}
 
 			unlockOrder(unlockMsg, order);
@@ -657,7 +715,9 @@ contract MayanSwift is ReentrancyGuard {
 		bytes memory encoded = abi.encodePacked(uint8(Action.BATCH_UNLOCK), uint8(orderHashes.length));
 		for(uint i=0; i<orderHashes.length; i++) {
 			UnlockMsg memory unlockMsg = unlockMsgs[orderHashes[i]];
-			require(unlockMsg.action == uint8(Action.UNLOCK), 'invalid order hash');
+			if (unlockMsg.action != uint8(Action.UNLOCK)) {
+				revert InvalidAction();
+			}
 			encoded = abi.encodePacked(encoded, encodeUnlockMsg(unlockMsg));
 		}
 		
@@ -741,7 +801,9 @@ contract MayanSwift is ReentrancyGuard {
 		fulfillMsg.action = encoded.toUint8(index);
 		index += 1;
 
-		require(fulfillMsg.action == uint8(Action.FULFILL), 'invalid action');
+		if (fulfillMsg.action != uint8(Action.FULFILL)) {
+			revert InvalidAction();
+		}
 
 		fulfillMsg.orderHash = encoded.toBytes32(index);
 		index += 32;
@@ -781,8 +843,6 @@ contract MayanSwift is ReentrancyGuard {
 
 		fulfillMsg.driver = encoded.toBytes32(index);
 		index += 32;
-
-		require(encoded.length == index, 'invalid msg lenght');
 	}
 
 	function parseUnlockPayload(bytes memory encoded) public pure returns (UnlockMsg memory unlockMsg) {
@@ -791,7 +851,9 @@ contract MayanSwift is ReentrancyGuard {
 		unlockMsg.action = encoded.toUint8(index);
 		index += 1;
 
-		require(unlockMsg.action == uint8(Action.UNLOCK), 'invalid action');
+		if (unlockMsg.action != uint8(Action.UNLOCK)) {
+			revert InvalidAction();
+		}
 
 		unlockMsg.orderHash = encoded.toBytes32(index);
 		index += 32;
@@ -807,8 +869,6 @@ contract MayanSwift is ReentrancyGuard {
 
 		unlockMsg.recipient = encoded.toBytes32(index);
 		index += 32;
-
-		require(encoded.length == index, 'invalid msg lenght');
 	}
 
 	function parseRefundPayload(bytes memory encoded) public pure returns (RefundMsg memory refundMsg) {
@@ -817,7 +877,9 @@ contract MayanSwift is ReentrancyGuard {
 		refundMsg.action = encoded.toUint8(index);
 		index += 1;
 
-		require(refundMsg.action == uint8(Action.REFUND), 'invalid action');
+		if (refundMsg.action != uint8(Action.REFUND)) {
+			revert InvalidAction();
+		}
 
 		refundMsg.orderHash = encoded.toBytes32(index);
 		index += 32;
@@ -842,8 +904,6 @@ contract MayanSwift is ReentrancyGuard {
 
 		refundMsg.refundFee = encoded.toUint64(index);
 		index += 8;
-
-		require(encoded.length == index, 'invalid msg lenght');
 	}
 
 	function encodeKey(Key memory key) internal pure returns (bytes memory encoded) {
@@ -931,27 +991,37 @@ contract MayanSwift is ReentrancyGuard {
 	}
 
 	function setPause(bool _pause) public {
-		require(msg.sender == guardian, 'only guardian');
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
 		paused = _pause;
 	}
 
 	function setFeeManager(address _feeManager) public {
-		require(msg.sender == guardian, 'only guardian');
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
 		feeManager = IFeeManager(_feeManager);
 	}
 
 	function setConsistencyLevel(uint8 _consistencyLevel) public {
-		require(msg.sender == guardian, 'only guardian');
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
 		consistencyLevel = _consistencyLevel;
 	}
 
 	function changeGuardian(address newGuardian) public {
-		require(msg.sender == guardian, 'only guardian');
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
 		nextGuardian = newGuardian;
 	}
 
 	function claimGuardian() public {
-		require(msg.sender == nextGuardian, 'only next guardian');
+		if (msg.sender != nextGuardian) {
+			revert Unauthorized();
+		}
 		guardian = nextGuardian;
 	}
 
