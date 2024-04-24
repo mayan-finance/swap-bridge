@@ -54,6 +54,8 @@ contract MayanSwift is ReentrancyGuard {
 	error InvalidEmitterAddress();
 	error InvalidSrcChain();
 	error OrderNotExists();
+	error SmallAmountIn();
+	error FeesTooHigh();
 
 	struct Order {
 		uint16 destChainId;
@@ -200,7 +202,12 @@ contract MayanSwift is ReentrancyGuard {
 		}
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
-		require(normlizedAmountIn > 0, 'small amount in');
+		if (normlizedAmountIn == 0) {
+			revert SmallAmountIn();
+		}
+		if (params.cancelFee + params.refundFee > normlizedAmountIn) {
+			revert FeesTooHigh();
+		}
 
 		if (params.tokenOut == bytes32(0)) {
 			require(params.gasDrop == 0, 'gas drop not supported');
@@ -261,7 +268,12 @@ contract MayanSwift is ReentrancyGuard {
 		amountIn = IERC20(tokenIn).balanceOf(address(this)) - balance;
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
-		require(normlizedAmountIn > 0, 'small amount in');
+		if (normlizedAmountIn == 0) {
+			revert SmallAmountIn();
+		}
+		if (params.cancelFee + params.refundFee > normlizedAmountIn) {
+			revert FeesTooHigh();
+		}
 		if (params.tokenOut == bytes32(0)) {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
@@ -323,7 +335,12 @@ contract MayanSwift is ReentrancyGuard {
 		require(amountIn == amount, 'invalid amount transferred');
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
-		require(normlizedAmountIn > 0, 'small amount in');
+		if (normlizedAmountIn == 0) {
+			revert SmallAmountIn();
+		}
+		if (params.cancelFee + params.refundFee > normlizedAmountIn) {
+			revert FeesTooHigh();
+		}
 		if (params.tokenOut == bytes32(0)) {
 			require(params.gasDrop == 0, 'gas drop not supported');
 		}
@@ -622,12 +639,13 @@ contract MayanSwift is ReentrancyGuard {
 		if (vm.emitterChainId != order.destChainId) {
 			revert InvalidEmitterChain();
 		}
-		if (truncateAddress(vm.emitterAddress) != address(this) && vm.emitterAddress != solanaEmitter) {
+		if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
 			revert InvalidEmitterAddress();
 		}
 
 		address recipient = truncateAddress(refundMsg.recipient);
-		address canceler = truncateAddress(refundMsg.canceler);
+		// no error if canceler is invalid
+		address canceler = address(uint160(uint256(refundMsg.canceler)));
 		address tokenIn = truncateAddress(refundMsg.tokenIn);
 		
 		uint8 decimals;
@@ -663,7 +681,7 @@ contract MayanSwift is ReentrancyGuard {
 		if (vm.emitterChainId != order.destChainId) {
 			revert InvalidEmitterChain();
 		}
-		if (truncateAddress(vm.emitterAddress) != address(this) && vm.emitterAddress != solanaEmitter) {
+		if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
 			revert InvalidEmitterAddress();
 		}
 
@@ -702,7 +720,7 @@ contract MayanSwift is ReentrancyGuard {
 			if (vm.emitterChainId != order.destChainId) {
 				revert InvalidEmitterChain();
 			}
-			if (truncateAddress(vm.emitterAddress) != address(this) && vm.emitterAddress != solanaEmitter) {
+			if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
 				revert InvalidEmitterAddress();
 			}
 
