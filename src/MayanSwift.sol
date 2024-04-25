@@ -751,7 +751,7 @@ contract MayanSwift is ReentrancyGuard {
 	}
 
 	function postBatch(bytes32[] memory orderHashes) public payable returns (uint64 sequence) {
-		bytes memory encoded = abi.encodePacked(uint8(Action.BATCH_UNLOCK), uint8(orderHashes.length));
+		bytes memory encoded = abi.encodePacked(uint8(Action.BATCH_UNLOCK), uint16(orderHashes.length));
 		for(uint i=0; i<orderHashes.length; i++) {
 			UnlockMsg memory unlockMsg = unlockMsgs[orderHashes[i]];
 			if (unlockMsg.action != uint8(Action.UNLOCK)) {
