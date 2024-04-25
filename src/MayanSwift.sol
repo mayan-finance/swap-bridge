@@ -193,7 +193,7 @@ contract MayanSwift is ReentrancyGuard {
 
 		domainSeparator = keccak256(abi.encode(
 			keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)"),
-			keccak256("Mayan unlockMsg v1.0"),
+			keccak256("Mayan Swift v1.0"),
 			uint256(IWormhole(_wormhole).chainId()),
 			address(this)
 		));
@@ -716,12 +716,12 @@ contract MayanSwift is ReentrancyGuard {
 
 		uint index = 0;
 		uint8 action = vm.payload.toUint8(0);
-		index += 1; 
+		index += 1;
 		if (action != uint8(Action.BATCH_UNLOCK)) {
 			revert InvalidAction();
 		}
 
-		uint16 count = vm.payload.toUint8(index);
+		uint16 count = vm.payload.toUint16(index);
 		index += 2;
 		for (uint i=0; i<count; i++) {
 			UnlockMsg memory unlockMsg = UnlockMsg({
