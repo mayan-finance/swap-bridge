@@ -554,7 +554,7 @@ contract MayanSwift is ReentrancyGuard {
 		if (order.status != Status.CREATED) {
 			revert InvalidOrderStatus();
 		}
-		order.status = Status.UNLOCKED;
+		orders[unlockMsg.orderHash].status = Status.UNLOCKED;
 		
 		address recipient = truncateAddress(unlockMsg.recipient);
 		address tokenIn = truncateAddress(unlockMsg.tokenIn);
@@ -652,7 +652,7 @@ contract MayanSwift is ReentrancyGuard {
 		if (order.status != Status.CREATED) {
 			revert InvalidOrderStatus();
 		}
-		order.status = Status.REFUNDED;
+		orders[refundMsg.orderHash].status = Status.REFUNDED;
 
 		if (vm.emitterChainId != order.destChainId) {
 			revert InvalidEmitterChain();
@@ -737,7 +737,6 @@ contract MayanSwift is ReentrancyGuard {
 			if (order.status != Status.CREATED) {
 				continue;
 			}
-
 			if (vm.emitterChainId != order.destChainId) {
 				revert InvalidEmitterChain();
 			}
