@@ -756,7 +756,14 @@ contract MayanSwift is ReentrancyGuard {
 			if (unlockMsg.action != uint8(Action.UNLOCK)) {
 				revert InvalidAction();
 			}
-			encoded = abi.encodePacked(encoded, encodeUnlockMsg(unlockMsg));
+			bytes memory encodedUnlock = abi.encodePacked(
+				unlockMsg.orderHash,
+				unlockMsg.srcChainId,
+				unlockMsg.tokenIn,
+				unlockMsg.amountIn,
+				unlockMsg.recipient
+			);
+			encoded = abi.encodePacked(encoded, encodedUnlock);
 		}
 		
 		sequence = wormhole.publishMessage{
