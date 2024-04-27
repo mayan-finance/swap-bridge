@@ -59,6 +59,7 @@ contract MayanSwift is ReentrancyGuard {
 	error InvalidGasDrop();
 	error InvalidDestChain();
 	error DuplicateOrder();
+	error InvalidAmount();
 
 	struct Order {
 		uint16 destChainId;
@@ -343,7 +344,9 @@ contract MayanSwift is ReentrancyGuard {
 		uint256 amount = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 		amount = IERC20(tokenIn).balanceOf(address(this)) - amount;
-		require(amountIn == amount, 'invalid amount');
+		if (amountIn != amount) {
+			revert InvalidAmount();
+		}
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
 		if (normlizedAmountIn == 0) {
@@ -805,7 +808,9 @@ contract MayanSwift is ReentrancyGuard {
 		uint256 wormholeFee = wormhole.messageFee();
 		netAmount = amountPromised - amountReferrer - amountProtocol;
 		if (tokenOut == address(0)) {
-			require(msg.value == amountPromised + wormholeFee, 'invalid amount value');
+			if (msg.value != amountPromised + wormholeFee) {
+				revert InvalidAmount();
+			}
 			if (amountReferrer > 0) {
 				payable(referrerAddr).transfer(amountReferrer);
 			}
