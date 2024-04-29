@@ -60,6 +60,8 @@ contract MayanSwift is ReentrancyGuard {
 	error InvalidDestChain();
 	error DuplicateOrder();
 	error InvalidAmount();
+	error DeadlineViolation();
+	error InvalidWormholeFee();
 
 	struct Order {
 		uint16 destChainId;
@@ -162,6 +164,7 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 tokenOut;
 		uint64 amountPromised;
 		uint64 gasDrop;
+		uint64 deadline;
 		bytes32 referrerAddr;
 		uint8 referrerBps;
 		uint8 protocolBps;
@@ -194,7 +197,7 @@ contract MayanSwift is ReentrancyGuard {
 
 		domainSeparator = keccak256(abi.encode(
 			keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)"),
-			keccak256("Mayan Swift v1.0"),
+			keccak256("Mayan Swift"),
 			uint256(IWormhole(_wormhole).chainId()),
 			address(this)
 		));
@@ -423,8 +426,16 @@ contract MayanSwift is ReentrancyGuard {
 
 		FulfillMsg memory fulfillMsg = parseFulfillPayload(vm.payload);
 
-		require(fulfillMsg.destChainId == wormhole.chainId(), 'wrong chain');
-		require(truncateAddress(fulfillMsg.driver) == msg.sender, 'invalid driver');
+		if (fulfillMsg.destChainId != wormhole.chainId()) {
+			revert InvalidDestChain();
+		}
+		if (truncateAddress(fulfillMsg.driver) != msg.sender) {
+			revert Unauthorized();
+		}
+
+		if (block.timestamp > fulfillMsg.deadline) {
+			revert DeadlineViolation();
+		}
 
 		if (orders[fulfillMsg.orderHash].status != Status.CREATED) {
 			revert InvalidOrderStatus();
@@ -509,6 +520,10 @@ contract MayanSwift is ReentrancyGuard {
 
 		if (computedOrderHash != orderHash) {
 			revert InvalidOrderHash();
+		}
+
+		if (block.timestamp > key.deadline) {
+			revert DeadlineViolation();
 		}
 
 		if (orders[computedOrderHash].status != Status.CREATED) {
@@ -610,7 +625,9 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 orderHash = keccak256(encodeKey(key));
 		Order memory order = orders[orderHash];
 
-		require(key.deadline < block.timestamp, 'not expired');
+		if (block.timestamp <= key.deadline) {
+			revert DeadlineViolation();
+		}
 
 		if (order.status != Status.CREATED) {
 			revert InvalidOrderStatus();
@@ -809,7 +826,7 @@ contract MayanSwift is ReentrancyGuard {
 		netAmount = amountPromised - amountReferrer - amountProtocol;
 		if (tokenOut == address(0)) {
 			if (msg.value != amountPromised + wormholeFee) {
-				revert InvalidAmount();
+				revert InvalidWormholeFee();
 			}
 			if (amountReferrer > 0) {
 				payable(referrerAddr).transfer(amountReferrer);
@@ -826,7 +843,9 @@ contract MayanSwift is ReentrancyGuard {
 				}
 				payable(destAddr).transfer(gasDrop);
 			} else {
-				require(msg.value == wormholeFee, 'invalid bridge fee');
+				if (msg.value != wormholeFee) {
+					revert InvalidWormholeFee();
+				}
 			}
 			
 			if (amountReferrer > 0) {
@@ -891,7 +910,10 @@ contract MayanSwift is ReentrancyGuard {
 		index += 8;
 
 		fulfillMsg.gasDrop = encoded.toUint64(index);
-		index += 8;	
+		index += 8;
+
+		fulfillMsg.deadline = encoded.toUint64(index);
+		index += 8;
 
 		fulfillMsg.referrerAddr = encoded.toBytes32(index);
 		index += 32;
