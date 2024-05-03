@@ -12,7 +12,7 @@ import "./libs/SignatureVerification.sol";
 
 contract MayanSwift is ReentrancyGuard {
 	event OrderCreated(bytes32 key);
-	event OrderFulfilled(bytes32 key, uint64 sequence);
+	event OrderFulfilled(bytes32 key, uint64 sequence, uint256 netAmount);
 	event OrderUnlocked(bytes32 key);
 	event OrderCanceled(bytes32 key, uint64 sequence);
 	event OrderRefunded(bytes32 key, uint256 netAmount);
@@ -113,6 +113,16 @@ contract MayanSwift is ReentrancyGuard {
 		bytes32 random;
 	}
 
+	struct PaymentParams {
+		address destAddr;
+		address tokenOut;
+		uint64 promisedAmount;
+		uint64 gasDrop;
+		address referrerAddr;
+		uint8 referrerBps;
+		uint8 protocolBps;
+	}
+
 	enum Status {
 		CREATED,
 		FULFILLED,
@@ -169,7 +179,6 @@ contract MayanSwift is ReentrancyGuard {
 		uint8 protocolBps;
 		uint16 srcChainId;
 		bytes32 tokenIn;
-		uint64 amountIn;
 	}
 
 	struct TransferParams {
@@ -409,6 +418,7 @@ contract MayanSwift is ReentrancyGuard {
 	}
 
 	function fulfillOrder(
+		uint256 fulfillAmount,
 		bytes memory encodedVm,
 		bytes32 recepient,
 		bool batch
@@ -424,6 +434,13 @@ contract MayanSwift is ReentrancyGuard {
 		}
 
 		FulfillMsg memory fulfillMsg = parseFulfillPayload(vm.payload);
+
+		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
+		if (tokenOut != address(0)) {
+			IERC20(tokenOut).safeTransferFrom(msg.sender, address(this), fulfillAmount);
+		} else if (fulfillAmount < msg.value) {
+			revert InvalidAmount();
+		}
 
 		if (fulfillMsg.destChainId != wormhole.chainId()) {
 			revert InvalidDestChain();
@@ -441,15 +458,16 @@ contract MayanSwift is ReentrancyGuard {
 		}
 		orders[fulfillMsg.orderHash].status = Status.FULFILLED;
 
-		makePayments(
-			fulfillMsg.destAddr,
-			fulfillMsg.tokenOut,
-			fulfillMsg.promisedAmount,
-			fulfillMsg.gasDrop,
-			fulfillMsg.referrerAddr,
-			fulfillMsg.referrerBps,
-			fulfillMsg.protocolBps
-		);
+		PaymentParams memory paymentParams = PaymentParams({
+			destAddr: truncateAddress(fulfillMsg.destAddr),
+			tokenOut: tokenOut,
+			promisedAmount: fulfillMsg.promisedAmount,
+			gasDrop: fulfillMsg.gasDrop,
+			referrerAddr: truncateAddress(fulfillMsg.referrerAddr),
+			referrerBps: fulfillMsg.referrerBps,
+			protocolBps: fulfillMsg.protocolBps
+		});
+		uint256 netAmount = makePayments(fulfillAmount, paymentParams);
 
 		UnlockMsg memory unlockMsg = UnlockMsg({
 			action: uint8(Action.UNLOCK),
@@ -468,10 +486,11 @@ contract MayanSwift is ReentrancyGuard {
 			}(0, encoded, consistencyLevel);
 		}
 
-		emit OrderFulfilled(fulfillMsg.orderHash, sequence);
+		emit OrderFulfilled(fulfillMsg.orderHash, sequence, netAmount);
 	}
 
 	function fulfillSimple(
+		uint256 fulfillAmount,
 		bytes32 orderHash,
 		bytes32 trader,
 		uint16 srcChainId,
@@ -482,6 +501,13 @@ contract MayanSwift is ReentrancyGuard {
 		bool batch
 	) public nonReentrant payable returns (uint64 sequence) {
 		require(params.auctionMode == uint8(AuctionMode.BYPASS), 'invalid auction mode');
+
+		address tokenOut = truncateAddress(params.tokenOut);
+		if (tokenOut != address(0)) {
+			IERC20(tokenOut).safeTransferFrom(msg.sender, address(this), fulfillAmount);
+		} else if (fulfillAmount < msg.value) {
+			revert InvalidAmount();
+		}		
 
 		Key memory key = Key({
 			trader: trader,
@@ -517,15 +543,16 @@ contract MayanSwift is ReentrancyGuard {
 		}
 		orders[computedOrderHash].status = Status.FULFILLED;
 
-		makePayments(
-			params.destAddr,
-			params.tokenOut,
-			params.minAmountOut,
-			params.gasDrop,
-			params.referrerAddr,
-			params.referrerBps,
-			protocolBps
-		);
+		PaymentParams memory paymentParams = PaymentParams({
+			destAddr: truncateAddress(key.destAddr),
+			tokenOut: tokenOut,
+			promisedAmount: key.minAmountOut,
+			gasDrop: key.gasDrop,
+			referrerAddr: truncateAddress(key.referrerAddr),
+			referrerBps: key.referrerBps,
+			protocolBps: protocolBps
+		});
+		uint256 netAmount = makePayments(fulfillAmount, paymentParams);
 
 		UnlockMsg memory unlockMsg = UnlockMsg({
 			action: uint8(Action.UNLOCK),
@@ -544,7 +571,7 @@ contract MayanSwift is ReentrancyGuard {
 			}(0, encoded, consistencyLevel);
 		}
 
-		emit OrderFulfilled(computedOrderHash, sequence);
+		emit OrderFulfilled(computedOrderHash, sequence, netAmount);
 	}
 
 	function unlockOrder(UnlockMsg memory unlockMsg, Order memory order) internal {
@@ -772,57 +799,55 @@ contract MayanSwift is ReentrancyGuard {
 	}
 
 	function makePayments(
-		bytes32 _destAddr,
-		bytes32 _tokenOut,
-		uint64 _promisedAmount,
-		uint64 _gasDrop,
-		bytes32 _referrerAddr,
-		uint8 _referrerBps,
-		uint8 _protocolBps
-	) internal {
-		address tokenOut = truncateAddress(_tokenOut);
+		uint256 fulfillAmount,
+		PaymentParams memory params
+	) internal returns (uint256 netAmount) {
 		uint8 decimals;
-		if (tokenOut == address(0)) {
+		if (params.tokenOut == address(0)) {
 			decimals = NATIVE_DECIMALS;
 		} else {
-			decimals = decimalsOf(tokenOut);
+			decimals = decimalsOf(params.tokenOut);
 		}
 
-		uint256 promisedAmount = deNormalizeAmount(_promisedAmount, decimals);
-		address referrerAddr = truncateAddress(_referrerAddr);
+		uint256 promisedAmount = deNormalizeAmount(params.promisedAmount, decimals);
 		
 		uint256 referrerAmount = 0;
-		if (referrerAddr != address(0) && _referrerBps != 0) {
-			referrerAmount = promisedAmount * _referrerBps / 10000;
+		if (params.referrerAddr != address(0) && params.referrerBps != 0) {
+			referrerAmount = promisedAmount * params.referrerBps / 10000;
 		}
 
 		uint256 protocolAmount = 0;
-		if (_protocolBps != 0) {
-			protocolAmount = promisedAmount * _protocolBps / 10000;
+		if (params.protocolBps != 0) {
+			protocolAmount = promisedAmount * params.protocolBps / 10000;
 		}
 
-		address destAddr = truncateAddress(_destAddr);
-		if (tokenOut == address(0)) {
+		netAmount = fulfillAmount - referrerAmount - protocolAmount;
+
+		if (fulfillAmount < promisedAmount + referrerAmount + protocolAmount) {
+			revert InvalidAmount();
+		}
+
+		if (params.tokenOut == address(0)) {
 			if (referrerAmount > 0) {
-				payable(referrerAddr).transfer(referrerAmount);
+				payable(params.referrerAddr).transfer(referrerAmount);
 			}
 			if (protocolAmount > 0) {
 				payable(feeManager.feeCollector()).transfer(protocolAmount);
 			}
-			payable(destAddr).transfer(promisedAmount);
+			payable(params.destAddr).transfer(netAmount);
 		} else {
-			if (_gasDrop > 0) {
-				uint256 gasDrop = deNormalizeAmount(_gasDrop, NATIVE_DECIMALS);
-				payable(destAddr).transfer(gasDrop);
+			if (params.gasDrop > 0) {
+				uint256 gasDrop = deNormalizeAmount(params.gasDrop, NATIVE_DECIMALS);
+				payable(params.destAddr).transfer(gasDrop);
 			}
 			
 			if (referrerAmount > 0) {
-				IERC20(tokenOut).safeTransferFrom(msg.sender, referrerAddr, referrerAmount);
+				IERC20(params.tokenOut).safeTransfer(params.referrerAddr, referrerAmount);
 			}
 			if (protocolAmount > 0) {
-				IERC20(tokenOut).safeTransferFrom(msg.sender, feeManager.feeCollector(), protocolAmount);
+				IERC20(params.tokenOut).safeTransfer(feeManager.feeCollector(), protocolAmount);
 			}
-			IERC20(tokenOut).safeTransferFrom(msg.sender, destAddr, promisedAmount);
+			IERC20(params.tokenOut).safeTransfer(params.destAddr, netAmount);
 		}
 	}
 
@@ -844,9 +869,6 @@ contract MayanSwift is ReentrancyGuard {
 
 		fulfillMsg.tokenIn = encoded.toBytes32(index);
 		index += 32;
-
-		fulfillMsg.amountIn = encoded.toUint64(index);
-		index += 8;
 
 		fulfillMsg.destAddr = encoded.toBytes32(index);
 		index += 32;
