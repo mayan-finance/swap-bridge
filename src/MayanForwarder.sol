@@ -20,6 +20,11 @@ contract MayanForwarder {
 	mapping(address => bool) public swapProtocols;
 	mapping(address => bool) public mayanProtocols;
 
+	event ForwardedEth(address mayanProtocol, bytes protocolData);
+	event ForwardedERC20(address token, uint256 amount, address mayanProtocol, bytes protocolData);
+	event SwapAndForwardedEth(uint256 amountIn, address swapProtocol, address middleToken, uint256 middleAmount, address mayanProtocol, bytes mayanData);
+	event SwapAndForwardedERC20(address tokenIn, uint256 amountIn, address swapProtocol, address middleToken, uint256 middleAmount, address mayanProtocol, bytes mayanData);
+
 	error UnsupportedProtocol();
 
 	struct PermitParams {
@@ -49,6 +54,8 @@ contract MayanForwarder {
 		}
 		(bool success, bytes memory returnedData) = mayanProtocol.call{value: msg.value}(protocolData);
 		require(success, string(returnedData));
+
+		emit ForwardedEth(mayanProtocol, protocolData);
 	}
 	
 	function forwardERC20(
@@ -61,15 +68,14 @@ contract MayanForwarder {
 		if (!mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
 		}
-		uint256 allowance = IERC20(tokenIn).allowance(msg.sender, address(this));
-		if (allowance < amountIn) {
-			execPermit(tokenIn, msg.sender, address(this), permitParams);
-		}
-		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+
+		pullTokenIn(tokenIn, amountIn, permitParams);
 
 		maxApproveIfNeeded(tokenIn, mayanProtocol, amountIn);
 		(bool success, bytes memory returnedData) = mayanProtocol.call{value: msg.value}(protocolData);
 		require(success, string(returnedData));
+
+		emit ForwardedERC20(tokenIn, amountIn, mayanProtocol, protocolData);
 	}
 
 	function swapAndForwardEth(
@@ -100,7 +106,8 @@ contract MayanForwarder {
 		bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
 		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(modifiedData);
 		require(success, string(returnedData));
-		emit SwapAndForwarded(middleAmount);
+
+		emit SwapAndForwardedEth(amountIn, swapProtocol, middleToken, middleAmount, mayanProtocol, mayanData);
 	}
 
 	function swapAndForwardERC20(
@@ -119,11 +126,7 @@ contract MayanForwarder {
 		}
 		require(tokenIn != middleToken, "tokenIn and tokenOut must be different");
 
-		uint256 allowance = IERC20(tokenIn).allowance(msg.sender, address(this));
-		if (allowance < amountIn) {
-			execPermit(tokenIn, msg.sender, address(this), permitParams);
-		}
-		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+		pullTokenIn(tokenIn, amountIn, permitParams);
 
 		maxApproveIfNeeded(tokenIn, swapProtocol, amountIn);
 		uint256 middleAmount = IERC20(middleToken).balanceOf(address(this));
@@ -138,7 +141,10 @@ contract MayanForwarder {
 		bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
 		(success, returnedData) = mayanProtocol.call{value: msg.value}(modifiedData);
 		require(success, string(returnedData));
-		emit SwapAndForwarded(middleAmount);
+
+		transferBackRemaining(tokenIn, amountIn);
+
+		emit SwapAndForwardedERC20(tokenIn, amountIn, swapProtocol, middleToken, middleAmount, mayanProtocol, mayanData);
 	}
 
 	function replaceMiddleAmount(bytes calldata mayanData, uint256 middleAmount) internal pure returns(bytes memory) {
@@ -178,12 +184,11 @@ contract MayanForwarder {
 	function execPermit(
 		address token,
 		address owner,
-		address spender,
 		PermitParams calldata permitParams
 	) internal {
 		IERC20Permit(token).permit(
 			owner,
-			spender,
+			address(this),
 			permitParams.value,
 			permitParams.deadline,
 			permitParams.v,
@@ -192,9 +197,34 @@ contract MayanForwarder {
 		);
 	}
 
+	function pullTokenIn(
+		address tokenIn,
+		uint256 amountIn,
+		PermitParams calldata permitParams
+	) internal {
+		uint256 allowance = IERC20(tokenIn).allowance(msg.sender, address(this));
+		if (allowance < amountIn) {
+			execPermit(tokenIn, msg.sender, permitParams);
+		}
+		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+	}
+
+	function transferBackRemaining(address token, uint256 maxAmount) internal {
+		uint256 remaining = IERC20(token).balanceOf(address(this));
+		if (remaining > 0 && remaining <= maxAmount) {
+			IERC20(token).safeTransfer(msg.sender, remaining);
+		}
+	}
+
 	function rescueToken(address token, uint256 amount, address to) public {
 		require(msg.sender == guardian, 'only guardian');
 		IERC20(token).safeTransfer(to, amount);
+	}
+
+	function rescueEth(uint256 amount, address payable to) public {
+		require(msg.sender == guardian, 'only guardian');
+		require(to != address(0), 'transfer to the zero address');
+		to.transfer(amount);
 	}
 
 	function changeGuardian(address newGuardian) public {
