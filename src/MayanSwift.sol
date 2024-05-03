@@ -472,7 +472,6 @@ contract MayanSwift is ReentrancyGuard {
 	}
 
 	function fulfillSimple(
-		uint256 fulfillAmount,
 		bytes32 orderHash,
 		bytes32 trader,
 		uint16 srcChainId,
@@ -483,11 +482,6 @@ contract MayanSwift is ReentrancyGuard {
 		bool batch
 	) public nonReentrant payable returns (uint64 sequence) {
 		require(params.auctionMode == uint8(AuctionMode.BYPASS), 'invalid auction mode');
-
-		address tokenOut = truncateAddress(params.tokenOut);
-		if (tokenOut != address(0)) {
-			IERC20(tokenOut).safeTransferFrom(msg.sender, address(this), fulfillAmount);
-		}
 
 		Key memory key = Key({
 			trader: trader,
