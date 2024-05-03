@@ -808,22 +808,20 @@ contract MayanSwift is ReentrancyGuard {
 		} else {
 			decimals = decimalsOf(params.tokenOut);
 		}
-
-		uint256 promisedAmount = deNormalizeAmount(params.promisedAmount, decimals);
 		
 		uint256 referrerAmount = 0;
 		if (params.referrerAddr != address(0) && params.referrerBps != 0) {
-			referrerAmount = promisedAmount * params.referrerBps / 10000;
+			referrerAmount = fulfillAmount * params.referrerBps / 10000;
 		}
 
 		uint256 protocolAmount = 0;
 		if (params.protocolBps != 0) {
-			protocolAmount = promisedAmount * params.protocolBps / 10000;
+			protocolAmount = fulfillAmount * params.protocolBps / 10000;
 		}
 
 		netAmount = fulfillAmount - referrerAmount - protocolAmount;
-
-		if (fulfillAmount < promisedAmount + referrerAmount + protocolAmount) {
+		uint256 promisedAmount = deNormalizeAmount(params.promisedAmount, decimals);
+		if (netAmount < promisedAmount) {
 			revert InvalidAmount();
 		}
 
