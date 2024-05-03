@@ -760,7 +760,7 @@ contract MayanSwift is ReentrancyGuard {
 				tokenIn: vm.payload.toBytes32(index + 34),
 				recipient: vm.payload.toBytes32(index + 66)
 			});
-			index += 106;
+			index += 98;
 			Order memory order = getOrder(unlockMsg.orderHash);
 			if (order.status != Status.CREATED) {
 				continue;
