@@ -37,20 +37,16 @@ contract MayanSwift is ReentrancyGuard {
 
 	bytes32 private domainSeparator;
 
-	mapping(bytes32 => Order) private orders;
+	mapping(bytes32 => Order) public orders;
 	mapping(bytes32 => UnlockMsg) public unlockMsgs;
 
 
 	error Paused();
 	error Unauthorized();
 	error InvalidAction();
-	error InvalidEmitter();
-	error InvalidReferrerBps();
-	error InvalidProtocolBps();
+	error InvalidBpsFee();
 	error InvalidOrderStatus();
 	error InvalidOrderHash();
-	error InvalidAuctionChain();
-	error InvalidAuctionAddress();
 	error InvalidEmitterChain();
 	error InvalidEmitterAddress();
 	error InvalidSrcChain();
@@ -231,12 +227,9 @@ contract MayanSwift is ReentrancyGuard {
 			revert InvalidGasDrop();
 		}
 
-		if (params.referrerBps > BPS_FEE_LIMIT) {
-			revert InvalidReferrerBps();
-		}
 		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, address(0), params.tokenOut, params.destChainId, params.referrerBps);
-		if (protocolBps > BPS_FEE_LIMIT) {
-			revert InvalidProtocolBps();
+		if (params.referrerBps > BPS_FEE_LIMIT || protocolBps > BPS_FEE_LIMIT) {
+			revert InvalidBpsFee();
 		}
 
 		Key memory key = buildKey(params, bytes32(0), wormhole.chainId(), protocolBps);
@@ -283,12 +276,9 @@ contract MayanSwift is ReentrancyGuard {
 			revert InvalidGasDrop();
 		}
 
-		if (params.referrerBps > BPS_FEE_LIMIT) {
-			revert InvalidReferrerBps();
-		}
 		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
-		if (protocolBps > BPS_FEE_LIMIT) {
-			revert InvalidProtocolBps();
+		if (params.referrerBps > BPS_FEE_LIMIT || protocolBps > BPS_FEE_LIMIT) {
+			revert InvalidBpsFee();
 		}
 
 		Key memory key = buildKey(params, bytes32(uint256(uint160(tokenIn))), wormhole.chainId(), protocolBps);
@@ -339,12 +329,9 @@ contract MayanSwift is ReentrancyGuard {
 			revert InvalidGasDrop();
 		}
 
-		if (params.referrerBps > BPS_FEE_LIMIT) {
-			revert InvalidReferrerBps();
-		}
 		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
-		if (protocolBps > BPS_FEE_LIMIT) {
-			revert InvalidProtocolBps();
+		if (params.referrerBps > BPS_FEE_LIMIT || protocolBps > BPS_FEE_LIMIT) {
+			revert InvalidBpsFee();
 		}
 
 		Key memory key = buildKey(params, bytes32(uint256(uint160(tokenIn))), wormhole.chainId(), protocolBps);
@@ -379,10 +366,10 @@ contract MayanSwift is ReentrancyGuard {
 
 		require(valid, reason);
 		if (vm.emitterChainId != auctionChainId) {
-			revert InvalidAuctionChain();
+			revert InvalidEmitterChain();
 		}
 		if (vm.emitterAddress != auctionAddr) {
-			revert InvalidAuctionAddress();
+			revert InvalidEmitterAddress();
 		}
 
 		FulfillMsg memory fulfillMsg = parseFulfillPayload(vm.payload);
