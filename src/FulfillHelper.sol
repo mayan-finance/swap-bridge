@@ -48,7 +48,7 @@ contract FulfillHelper {
 		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
 		}
-		require(msg.value >= amountIn, "Insufficient input amount");
+		require(msg.value >= amountIn, 'Insufficient input value');
 		uint256 fulfillAmount = IERC20(fulfillToken).balanceOf(address(this));
 		(bool success, bytes memory returnedData) = swapProtocol.call{value: amountIn}(swapData);
 		require(success, string(returnedData));
@@ -74,7 +74,7 @@ contract FulfillHelper {
 		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
 		}		
-		require(fulfillToken != address(0), "Invalid fulfill token");
+		require(fulfillToken != address(0), 'Invalid fulfill token');
 		pullTokenIn(tokenIn, amountIn, permitParams);
 		maxApproveIfNeeded(fulfillToken, swapProtocol, amountIn);
 
@@ -151,5 +151,38 @@ contract FulfillHelper {
 			permitParams.r,
 			permitParams.s
 		);
-	}    
+	}
+
+	function rescueToken(address token, uint256 amount, address to) public {
+		require(msg.sender == guardian, 'only guardian');
+		IERC20(token).safeTransfer(to, amount);
+	}
+
+	function rescueEth(uint256 amount, address payable to) public {
+		require(msg.sender == guardian, 'only guardian');
+		require(to != address(0), 'transfer to the zero address');
+		to.transfer(amount);
+	}
+
+	function changeGuardian(address newGuardian) public {
+		require(msg.sender == guardian, 'only guardian');
+		nextGuardian = newGuardian;
+	}
+
+	function claimGuardian() public {
+		require(msg.sender == nextGuardian, 'only next guardian');
+		guardian = nextGuardian;
+	}
+
+	function setSwapProtocol(address swapProtocol, bool enabled) public {
+		require(msg.sender == guardian, 'only guardian');
+		swapProtocols[swapProtocol] = enabled;
+	}
+
+	function setMayanProtocol(address mayanProtocol, bool enabled) public {
+		require(msg.sender == guardian, 'only guardian');
+		mayanProtocols[mayanProtocol] = enabled;
+	}	
+
+	receive() external payable {}  
 }
