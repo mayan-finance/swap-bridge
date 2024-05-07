@@ -37,7 +37,7 @@ contract FulfillHelper {
 		}
 	}
 
-	function fullfillWithEth(
+	function fulfillWithEth(
 		uint256 amountIn,
 		address fulfillToken,
 		address swapProtocol,
@@ -61,7 +61,7 @@ contract FulfillHelper {
 		emit fulfilledWithEth();
 	} 
 
-	function fullfillWithERC20(
+	function fulfillWithERC20(
 		address tokenIn,
 		uint256 amountIn,
 		address fulfillToken,
