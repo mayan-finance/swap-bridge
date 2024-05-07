@@ -78,7 +78,7 @@ contract FulfillHelper {
 			revert UnsupportedProtocol();
 		}
 		pullTokenIn(tokenIn, amountIn, permitParams);
-		maxApproveIfNeeded(fulfillToken, swapProtocol, amountIn);
+		maxApproveIfNeeded(tokenIn, swapProtocol, amountIn);
 
 		uint256 fulfillAmount;
 		if (fulfillToken == address(0)) {
