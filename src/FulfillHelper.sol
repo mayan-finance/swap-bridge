@@ -48,11 +48,14 @@ contract FulfillHelper {
 		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
 		}
+		require(fulfillToken != address(0), 'Invalid fulfill token');
 		require(msg.value >= amountIn, 'Insufficient input value');
 		uint256 fulfillAmount = IERC20(fulfillToken).balanceOf(address(this));
 		(bool success, bytes memory returnedData) = swapProtocol.call{value: amountIn}(swapData);
 		require(success, string(returnedData));
 		fulfillAmount = IERC20(fulfillToken).balanceOf(address(this)) - fulfillAmount;
+
+		replaceFulfillAmount(mayanData, fulfillAmount);
 
 		maxApproveIfNeeded(fulfillToken, mayanProtocol, fulfillAmount);
 		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(mayanData);
@@ -73,8 +76,7 @@ contract FulfillHelper {
 	) external payable {
 		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
-		}		
-		require(fulfillToken != address(0), 'Invalid fulfill token');
+		}
 		pullTokenIn(tokenIn, amountIn, permitParams);
 		maxApproveIfNeeded(fulfillToken, swapProtocol, amountIn);
 
@@ -107,6 +109,30 @@ contract FulfillHelper {
 
 		emit fulfilledWithERC20();
 	}
+
+	function replaceFulfillAmount(bytes calldata mayanData, uint256 fulfillAmount) internal pure returns(bytes memory) {
+		require(mayanData.length >= 68, "Mayan data too short");
+		bytes memory modifiedData = new bytes(mayanData.length);
+
+		// Copy the function selector
+		for (uint i = 0; i < 4; i++) {
+			modifiedData[i] = mayanData[i];
+		}
+
+		// Encode the amount and place it into the modified call data
+		// Starting from byte 4 to byte 35 (32 bytes for uint256)
+		bytes memory encodedAmount = abi.encode(fulfillAmount);
+		for (uint i = 0; i < 32; i++) {
+			modifiedData[i + 32] = encodedAmount[i];
+		}
+
+		// Copy the rest of the original data after the first argument
+		for (uint i = 36; i < mayanData.length; i++) {
+			modifiedData[i] = mayanData[i];
+		}
+
+		return modifiedData;
+	}	
 
 	function transferBackRemaining(address token, uint256 maxAmount) internal {
 		uint256 remaining = IERC20(token).balanceOf(address(this));
