@@ -14,9 +14,6 @@ contract FulfillHelper {
 	mapping(address => bool) public swapProtocols;
 	mapping(address => bool) public mayanProtocols;
 
-	event fulfilledWithEth();
-	event fulfilledWithERC20();
-
 	error UnsupportedProtocol();
 
 	struct PermitParams {
@@ -59,8 +56,6 @@ contract FulfillHelper {
 		maxApproveIfNeeded(fulfillToken, mayanProtocol, fulfillAmount);
 		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(modifiedData);
 		require(success, string(returnedData));
-
-		emit fulfilledWithEth();
 	} 
 
 	function fulfillWithERC20(
@@ -106,8 +101,6 @@ contract FulfillHelper {
 			(success, returnedData) = mayanProtocol.call{value: msg.value}(modifiedData);
 			require(success, string(returnedData));
 		}
-
-		emit fulfilledWithERC20();
 	}
 
 	function replaceFulfillAmount(bytes calldata mayanData, uint256 fulfillAmount) internal pure returns(bytes memory) {

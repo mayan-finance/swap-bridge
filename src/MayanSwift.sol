@@ -97,7 +97,7 @@ contract MayanSwift is ReentrancyGuard {
 		uint16 srcChainId;
 		bytes32 tokenIn;
 		bytes32 destAddr;
-		uint16 destChainId;		
+		uint16 destChainId;
 		bytes32 tokenOut;
 		uint64 minAmountOut;
 		uint64 gasDrop;
@@ -338,7 +338,7 @@ contract MayanSwift is ReentrancyGuard {
 
 		orderHash = keccak256(encodeKey(key));
 
-		signedOrderHash.verify(hashTypedData(orderHash), truncateAddress(params.trader));
+		signedOrderHash.verify(hashTypedData(orderHash, normlizedAmountIn), truncateAddress(params.trader));
 
 		if (params.destChainId == 0 || params.destChainId == wormhole.chainId()) {
 			revert InvalidDestChain();
@@ -969,8 +969,8 @@ contract MayanSwift is ReentrancyGuard {
 		return amount;
 	}
 
-	function hashTypedData(bytes32 orderHash) internal view returns (bytes32) {
-		bytes32 dataHash = keccak256(abi.encode(keccak256("CreateOrder(bytes32 orderHash)"), orderHash));
+	function hashTypedData(bytes32 orderHash, uint64 amountIn) internal view returns (bytes32) {
+		bytes32 dataHash = keccak256(abi.encode(keccak256("CreateOrder(bytes32 orderHash, uint64 amountIn)"), orderHash, amountIn));
 		return toTypedDataHash(domainSeparator, dataHash);
 	}
 
