@@ -653,9 +653,8 @@ contract MayanSwift is ReentrancyGuard {
 
 		require(valid, reason);
 
-		uint index = 0;
 		uint8 action = vm.payload.toUint8(0);
-		index += 1;
+		uint index = 1;
 		if (action != uint8(Action.BATCH_UNLOCK)) {
 			revert InvalidAction();
 		}
