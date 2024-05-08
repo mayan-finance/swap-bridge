@@ -55,10 +55,9 @@ contract FulfillHelper {
 		require(success, string(returnedData));
 		fulfillAmount = IERC20(fulfillToken).balanceOf(address(this)) - fulfillAmount;
 
-		replaceFulfillAmount(mayanData, fulfillAmount);
-
+		bytes memory modifiedData = replaceFulfillAmount(mayanData, fulfillAmount);
 		maxApproveIfNeeded(fulfillToken, mayanProtocol, fulfillAmount);
-		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(mayanData);
+		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(modifiedData);
 		require(success, string(returnedData));
 
 		emit fulfilledWithEth();
@@ -98,13 +97,13 @@ contract FulfillHelper {
 			fulfillAmount = IERC20(fulfillToken).balanceOf(address(this)) - fulfillAmount;
 		}
 
-		replaceFulfillAmount(mayanData, fulfillAmount);
+		bytes memory modifiedData = replaceFulfillAmount(mayanData, fulfillAmount);
 		if (fulfillToken == address(0)) {
-			(success, returnedData) = mayanProtocol.call{value: msg.value + fulfillAmount}(mayanData);
+			(success, returnedData) = mayanProtocol.call{value: msg.value + fulfillAmount}(modifiedData);
 			require(success, string(returnedData));
 		} else {
 			maxApproveIfNeeded(fulfillToken, mayanProtocol, fulfillAmount);
-			(success, returnedData) = mayanProtocol.call{value: msg.value}(mayanData);
+			(success, returnedData) = mayanProtocol.call{value: msg.value}(modifiedData);
 			require(success, string(returnedData));
 		}
 
@@ -112,7 +111,7 @@ contract FulfillHelper {
 	}
 
 	function replaceFulfillAmount(bytes calldata mayanData, uint256 fulfillAmount) internal pure returns(bytes memory) {
-		require(mayanData.length >= 68, "Mayan data too short");
+		require(mayanData.length >= 36, "Mayan data too short");
 		bytes memory modifiedData = new bytes(mayanData.length);
 
 		// Copy the function selector
