@@ -98,6 +98,7 @@ contract FulfillHelper {
 			fulfillAmount = IERC20(fulfillToken).balanceOf(address(this)) - fulfillAmount;
 		}
 
+		replaceFulfillAmount(mayanData, fulfillAmount);
 		if (fulfillToken == address(0)) {
 			(success, returnedData) = mayanProtocol.call{value: msg.value + fulfillAmount}(mayanData);
 			require(success, string(returnedData));

@@ -384,7 +384,7 @@ contract MayanSwift is ReentrancyGuard {
 		if (fulfillMsg.destChainId != wormhole.chainId()) {
 			revert InvalidDestChain();
 		}
-		if (truncateAddress(fulfillMsg.driver) != msg.sender) {
+		if (truncateAddress(fulfillMsg.driver) != tx.origin) {
 			revert Unauthorized();
 		}
 
