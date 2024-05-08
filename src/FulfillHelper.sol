@@ -124,7 +124,7 @@ contract FulfillHelper {
 		// Starting from byte 4 to byte 35 (32 bytes for uint256)
 		bytes memory encodedAmount = abi.encode(fulfillAmount);
 		for (uint i = 0; i < 32; i++) {
-			modifiedData[i + 32] = encodedAmount[i];
+			modifiedData[i + 4] = encodedAmount[i];
 		}
 
 		// Copy the rest of the original data after the first argument
