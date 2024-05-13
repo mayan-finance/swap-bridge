@@ -205,7 +205,7 @@ contract MayanSwift is ReentrancyGuard {
 		domainSeparator = keccak256(abi.encode(
 			keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)"),
 			keccak256("Mayan Swift"),
-			uint256(IWormhole(_wormhole).chainId()),
+			uint256(block.chainid),
 			address(this)
 		));
 	}
@@ -969,7 +969,7 @@ contract MayanSwift is ReentrancyGuard {
 	}
 
 	function hashTypedData(bytes32 orderHash, uint64 amountIn) internal view returns (bytes32) {
-		bytes32 dataHash = keccak256(abi.encode(keccak256("CreateOrder(bytes32 orderHash, uint64 amountIn)"), orderHash, amountIn));
+		bytes32 dataHash = keccak256(abi.encode(keccak256("CreateOrder(bytes32 orderHash,uint64 amountIn)"), orderHash, amountIn));
 		return toTypedDataHash(domainSeparator, dataHash);
 	}
 
