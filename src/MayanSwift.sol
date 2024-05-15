@@ -261,10 +261,7 @@ contract MayanSwift is ReentrancyGuard {
 			revert Paused();
 		}
 
-		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
-		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-		amountIn = IERC20(tokenIn).balanceOf(address(this)) - balance;
-
+		amountIn = pullTokens(tokenIn, amountIn);
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
 		if (normlizedAmountIn == 0) {
 			revert SmallAmountIn();
@@ -311,13 +308,7 @@ contract MayanSwift is ReentrancyGuard {
 			revert Paused();
 		}
 
-		uint256 amount = IERC20(tokenIn).balanceOf(address(this));
-		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-		amount = IERC20(tokenIn).balanceOf(address(this)) - amount;
-		if (amountIn != amount) {
-			revert InvalidAmount();
-		}
-
+		amountIn = pullTokens(tokenIn, amountIn);
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
 		if (normlizedAmountIn == 0) {
 			revert SmallAmountIn();
@@ -376,9 +367,7 @@ contract MayanSwift is ReentrancyGuard {
 
 		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
 		if (tokenOut != address(0)) {
-			uint256 balance = IERC20(tokenOut).balanceOf(address(this));
-			IERC20(tokenOut).safeTransferFrom(msg.sender, address(this), fulfillAmount);
-			fulfillAmount = IERC20(tokenOut).balanceOf(address(this)) - balance;
+			fulfillAmount = pullTokens(tokenOut, fulfillAmount);
 		}
 
 		if (fulfillMsg.destChainId != wormhole.chainId()) {
@@ -445,9 +434,7 @@ contract MayanSwift is ReentrancyGuard {
 
 		address tokenOut = truncateAddress(params.tokenOut);
 		if (tokenOut != address(0)) {
-			uint256 balance = IERC20(tokenOut).balanceOf(address(this));
-			IERC20(tokenOut).safeTransferFrom(msg.sender, address(this), fulfillAmount);
-			fulfillAmount = IERC20(tokenOut).balanceOf(address(this)) - balance;
+			fulfillAmount = pullTokens(tokenOut, fulfillAmount);
 		}	
 
 		params.destChainId = wormhole.chainId();
@@ -983,6 +970,12 @@ contract MayanSwift is ReentrancyGuard {
 		}
 	}
 
+	function pullTokens(address tokenIn, uint256 amount) internal returns (uint256) {
+		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
+		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amount);
+		return IERC20(tokenIn).balanceOf(address(this)) - balance;
+	}
+
 	function setPause(bool _pause) public {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
@@ -1016,6 +1009,14 @@ contract MayanSwift is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		guardian = nextGuardian;
+	}
+
+	function getOrders(bytes32[] memory orderHashes) public view returns (Order[] memory) {
+		Order[] memory result = new Order[](orderHashes.length);
+		for (uint i=0; i<orderHashes.length; i++) {
+			result[i] = orders[orderHashes[i]];
+		}
+		return result;
 	}
 
 	receive() external payable {}
