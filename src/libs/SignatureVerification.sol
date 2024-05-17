@@ -18,7 +18,7 @@ library SignatureVerification {
 
 	bytes32 constant UPPER_BIT_MASK = (0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
 
-	function verify(bytes calldata signature, bytes32 hash, address claimedSigner) internal view {
+	function verify(bytes calldata signature, bytes32 hash, address claimedSigner) external view {
 		bytes32 r;
 		bytes32 s;
 		uint8 v;

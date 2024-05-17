@@ -69,7 +69,7 @@ contract MayanForwarder {
 			revert UnsupportedProtocol();
 		}
 
-		pullTokenIn(tokenIn, amountIn, permitParams, protocolData);
+		pullToken(tokenIn, amountIn, permitParams);
 
 		maxApproveIfNeeded(tokenIn, mayanProtocol, amountIn);
 		(bool success, bytes memory returnedData) = mayanProtocol.call{value: msg.value}(protocolData);
@@ -126,7 +126,7 @@ contract MayanForwarder {
 		}
 		require(tokenIn != middleToken, "tokenIn and tokenOut must be different");
 
-		pullTokenIn(tokenIn, amountIn, permitParams, mayanData);
+		pullToken(tokenIn, amountIn, permitParams);
 
 		maxApproveIfNeeded(tokenIn, swapProtocol, amountIn);
 		uint256 middleAmount = IERC20(middleToken).balanceOf(address(this));
@@ -206,18 +206,16 @@ contract MayanForwarder {
 		);
 	}
 
-	function pullTokenIn(
+	function pullToken(
 		address tokenIn,
 		uint256 amountIn,
-		PermitParams calldata permitParams,
-		bytes calldata mayanData
+		PermitParams calldata permitParams
 	) internal {
-		address trader = extractTrader(mayanData);
-		uint256 allowance = IERC20(tokenIn).allowance(trader, address(this));
+		uint256 allowance = IERC20(tokenIn).allowance(msg.sender, address(this));
 		if (allowance < amountIn) {
-			execPermit(tokenIn, trader, permitParams);
+			execPermit(tokenIn, msg.sender, permitParams);
 		}
-		IERC20(tokenIn).safeTransferFrom(trader, address(this), amountIn);
+		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 	}
 
 	function transferBackRemaining(address token, uint256 maxAmount) internal {

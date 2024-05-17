@@ -210,7 +210,7 @@ contract MayanSwift is ReentrancyGuard {
 		));
 	}
 
-	function createOrderWithEth(OrderParams memory params) nonReentrant public payable returns (bytes32 orderHash) {
+	function createOrderWithEth(OrderParams memory params) nonReentrant external payable returns (bytes32 orderHash) {
 		if (paused) {
 			revert Paused();
 		}
@@ -256,7 +256,7 @@ contract MayanSwift is ReentrancyGuard {
 		address tokenIn,
 		uint256 amountIn,
 		OrderParams memory params
-	) nonReentrant public returns (bytes32 orderHash) {
+	) nonReentrant external returns (bytes32 orderHash) {
 		if (paused) {
 			revert Paused();
 		}
@@ -302,17 +302,25 @@ contract MayanSwift is ReentrancyGuard {
 		address tokenIn,
 		uint256 amountIn,
 		OrderParams memory params,
-		bytes calldata signedOrderHash
-	) nonReentrant public returns (bytes32 orderHash) {
+		bytes calldata signedOrderHash,
+		PermitParams calldata permitParams
+	) nonReentrant external returns (bytes32 orderHash) {
 		if (paused) {
 			revert Paused();
 		}
 
+		address trader = truncateAddress(params.trader);
+		uint256 allowance = IERC20(tokenIn).allowance(trader, address(this));
+		if (allowance < amountIn) {
+			execPermit(tokenIn, trader, permitParams);
+		}
 		amountIn = pullTokens(tokenIn, amountIn);
+
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
 		if (normlizedAmountIn == 0) {
 			revert SmallAmountIn();
 		}
+
 		if (params.cancelFee + params.refundFee >= normlizedAmountIn) {
 			revert FeesTooHigh();
 		}
@@ -974,6 +982,22 @@ contract MayanSwift is ReentrancyGuard {
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amount);
 		return IERC20(tokenIn).balanceOf(address(this)) - balance;
+	}
+
+	function execPermit(
+		address token,
+		address owner,
+		PermitParams calldata permitParams
+	) internal {
+		IERC20Permit(token).permit(
+			owner,
+			address(this),
+			permitParams.value,
+			permitParams.deadline,
+			permitParams.v,
+			permitParams.r,
+			permitParams.s
+		);
 	}
 
 	function setPause(bool _pause) public {
