@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import {IERC1271} from "../interfaces/IERC1271.sol";
 
-library SignatureVerification {
+library SignatureVerifier {
 	/// @notice Thrown when the passed in signature is not a valid length
 	error InvalidSignatureLength();
 

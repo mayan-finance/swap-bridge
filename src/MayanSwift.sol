@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/IWormhole.sol";
 import "./interfaces/IFeeManager.sol";
 import "./libs/BytesLib.sol";
-import "./libs/SignatureVerification.sol";
+import "./libs/SignatureVerifier.sol";
 
 contract MayanSwift is ReentrancyGuard {
 	event OrderCreated(bytes32 key);
@@ -19,7 +19,7 @@ contract MayanSwift is ReentrancyGuard {
 
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
-	using SignatureVerification for bytes;
+	using SignatureVerifier for bytes;
 
 	uint16 constant SOLANA_CHAIN_ID = 1;
 	uint8 constant BPS_FEE_LIMIT = 50;
