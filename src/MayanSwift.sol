@@ -261,7 +261,7 @@ contract MayanSwift is ReentrancyGuard {
 			revert Paused();
 		}
 
-		amountIn = pullTokens(tokenIn, amountIn);
+		amountIn = pullTokensFrom(tokenIn, amountIn, msg.sender);
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
 		if (normlizedAmountIn == 0) {
 			revert SmallAmountIn();
@@ -314,7 +314,7 @@ contract MayanSwift is ReentrancyGuard {
 		if (allowance < amountIn) {
 			execPermit(tokenIn, trader, permitParams);
 		}
-		amountIn = pullTokens(tokenIn, amountIn);
+		amountIn = pullTokensFrom(tokenIn, amountIn, trader);
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
 		if (normlizedAmountIn == 0) {
@@ -375,7 +375,7 @@ contract MayanSwift is ReentrancyGuard {
 
 		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
 		if (tokenOut != address(0)) {
-			fulfillAmount = pullTokens(tokenOut, fulfillAmount);
+			fulfillAmount = pullTokensFrom(tokenOut, fulfillAmount, msg.sender);
 		}
 
 		if (fulfillMsg.destChainId != wormhole.chainId()) {
@@ -442,7 +442,7 @@ contract MayanSwift is ReentrancyGuard {
 
 		address tokenOut = truncateAddress(params.tokenOut);
 		if (tokenOut != address(0)) {
-			fulfillAmount = pullTokens(tokenOut, fulfillAmount);
+			fulfillAmount = pullTokensFrom(tokenOut, fulfillAmount, msg.sender);
 		}	
 
 		params.destChainId = wormhole.chainId();
@@ -978,9 +978,9 @@ contract MayanSwift is ReentrancyGuard {
 		}
 	}
 
-	function pullTokens(address tokenIn, uint256 amount) internal returns (uint256) {
+	function pullTokensFrom(address tokenIn, uint256 amount, address from) internal returns (uint256) {
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
-		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amount);
+		IERC20(tokenIn).safeTransferFrom(from, address(this), amount);
 		return IERC20(tokenIn).balanceOf(address(this)) - balance;
 	}
 
