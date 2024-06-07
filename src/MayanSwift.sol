@@ -302,6 +302,7 @@ contract MayanSwift is ReentrancyGuard {
 		address tokenIn,
 		uint256 amountIn,
 		OrderParams memory params,
+		uint256 submissionFee,
 		bytes calldata signedOrderHash,
 		PermitParams calldata permitParams
 	) nonReentrant external returns (bytes32 orderHash) {
@@ -311,10 +312,13 @@ contract MayanSwift is ReentrancyGuard {
 
 		address trader = truncateAddress(params.trader);
 		uint256 allowance = IERC20(tokenIn).allowance(trader, address(this));
-		if (allowance < amountIn) {
+		if (allowance < amountIn + submissionFee) {
 			execPermit(tokenIn, trader, permitParams);
 		}
 		amountIn = pullTokensFrom(tokenIn, amountIn, trader);
+		if (submissionFee > 0) {
+			IERC20(tokenIn).safeTransferFrom(trader, msg.sender, submissionFee);
+		}
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
 		if (normlizedAmountIn == 0) {
@@ -333,11 +337,9 @@ contract MayanSwift is ReentrancyGuard {
 			revert InvalidBpsFee();
 		}
 
-		Key memory key = buildKey(params, bytes32(uint256(uint160(tokenIn))), wormhole.chainId(), protocolBps);
+		orderHash = keccak256(encodeKey(buildKey(params, bytes32(uint256(uint160(tokenIn))), wormhole.chainId(), protocolBps)));
 
-		orderHash = keccak256(encodeKey(key));
-
-		signedOrderHash.verify(hashTypedData(orderHash, amountIn), truncateAddress(params.trader));
+		signedOrderHash.verify(hashTypedData(orderHash, amountIn, submissionFee), trader);
 
 		if (params.destChainId == 0 || params.destChainId == wormhole.chainId()) {
 			revert InvalidDestChain();
@@ -963,8 +965,8 @@ contract MayanSwift is ReentrancyGuard {
 		return amount;
 	}
 
-	function hashTypedData(bytes32 orderHash, uint256 amountIn) internal view returns (bytes32) {
-		bytes memory encoded = abi.encode(keccak256("CreateOrder(bytes32 OrderId,uint256 InputAmount)"), orderHash, amountIn);
+	function hashTypedData(bytes32 orderHash, uint256 amountIn, uint256 submissionFee) internal view returns (bytes32) {
+		bytes memory encoded = abi.encode(keccak256("CreateOrder(bytes32 OrderId,uint256 InputAmount,uint256 SubmissionFee)"), orderHash, amountIn, submissionFee);
 		return toTypedDataHash(domainSeparator, keccak256(encoded));
 	}
 
