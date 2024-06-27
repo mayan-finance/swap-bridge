@@ -47,6 +47,7 @@ contract MayanCircle is ReentrancyGuard {
 	error InvalidGasDrop();
 	error InvalidAction();
 	error InvalidEmitter();
+	error InvalidDestAddr();
 
 	enum Action {
 		NONE,
@@ -451,9 +452,14 @@ contract MayanCircle is ReentrancyGuard {
 			revert InvalidEmitter();
 		}
 
-		UnlockRefinedFeeMsg memory refinedMsg = parseUnlockRefinedFee(vm1.payload);
+		UnlockRefinedFeeMsg memory refinedMsg = parseUnlockRefinedFee(vm2.payload);
+		if (refinedMsg.action != uint8(Action.UNLOCK_FEE_REFINE)) {
+			revert InvalidAction();
+		}
 
-		require(refinedMsg.destAddr == feeLock.destAddr, 'invalid dest addr');
+		if (refinedMsg.destAddr != feeLock.destAddr) {
+			revert InvalidDestAddr();
+		}
 		if (refinedMsg.cctpNonce != unlockMsg.cctpNonce) {
 			revert InvalidNonce();
 		}
