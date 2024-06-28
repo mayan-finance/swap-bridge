@@ -501,7 +501,7 @@ contract MayanCircle is ReentrancyGuard {
 		(address localToken, uint256 cctpAmount) = receiveCctp(cctpMsg, cctpSigs, cctpSourceDomain, cctpSourceToken);
 
 		if (fulfillMsg.redeemFee > 0) {
-			IERC20(localToken).transfer(msg.sender, fulfillMsg.redeemFee);
+			IERC20(localToken).safeTransfer(msg.sender, fulfillMsg.redeemFee);
 		}
 
 		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
