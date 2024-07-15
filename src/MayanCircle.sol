@@ -48,6 +48,7 @@ contract MayanCircle is ReentrancyGuard {
 	error InvalidAction();
 	error InvalidEmitter();
 	error InvalidDestAddr();
+	error InvalidMintRecipient();
 
 	enum Action {
 		NONE,
@@ -323,6 +324,10 @@ contract MayanCircle is ReentrancyGuard {
 		uint64 cctpNonce = cctpMsg.toUint64(12);
 		bytes32 cctpSourceToken = cctpMsg.toBytes32(120);
 
+		if (truncateAddress(cctpMsg.toBytes32(152)) != address(this)) {
+			revert InvalidMintRecipient();
+		}
+
 		if (cctpSourceDomain != redeemMsg.cctpDomain) {
 			revert InvalidDomain();
 		}
@@ -347,10 +352,10 @@ contract MayanCircle is ReentrancyGuard {
 	function redeemWithLockedFee(bytes memory cctpMsg, bytes memory cctpSigs, bytes32 unlockerAddr) external nonReentrant payable returns (uint64 sequence) {
 		uint32 cctpSourceDomain = cctpMsg.toUint32(4);
 		uint64 cctpNonce = cctpMsg.toUint64(12);
-		address caller = truncateAddress(cctpMsg.toBytes32(84));
-		require(caller == address(this), 'invalid caller');
 		address mintRecipient = truncateAddress(cctpMsg.toBytes32(152));
-		require(mintRecipient != address(this), 'invalid mint recipient');
+		if (mintRecipient == address(this)) {
+			revert InvalidMintRecipient();
+		}
 
 		bool success = cctpTokenMessenger.localMessageTransmitter().receiveMessage(cctpMsg, cctpSigs);
 		if (!success) {
