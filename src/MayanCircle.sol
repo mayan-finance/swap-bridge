@@ -439,7 +439,7 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		UnlockFeeMsg memory unlockMsg = parseUnlockFeeMsg(vm1.payload);
-		if (unlockMsg.action != uint8(Action.UNLOCK_FEE_REFINE)) {
+		if (unlockMsg.action != uint8(Action.UNLOCK_FEE)) {
 			revert InvalidAction();
 		}
 		if (unlockMsg.cctpDomain != localDomain) {
