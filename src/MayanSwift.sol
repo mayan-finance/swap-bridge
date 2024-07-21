@@ -520,7 +520,7 @@ contract MayanSwift is ReentrancyGuard {
 
 		uint256 amountIn = deNormalizeAmount(order.amountIn, decimals);
 		if (tokenIn == address(0)) {
-			payable(recipient).transfer(amountIn);
+			payViaCall(recipient, amountIn);
 		} else {
 			IERC20(tokenIn).safeTransfer(recipient, amountIn);
 		}
@@ -615,13 +615,13 @@ contract MayanSwift is ReentrancyGuard {
 
 		uint256 netAmount = amountIn - cancelFee - refundFee;
 		if (tokenIn == address(0)) {
-			payable(canceler).transfer(cancelFee);
-			payable(msg.sender).transfer(refundFee);
-			payable(recipient).transfer(netAmount);
+			payViaCall(canceler, cancelFee);
+			payViaCall(msg.sender, refundFee);
+			payViaCall(recipient, netAmount);
 		} else {
-			IERC20(tokenIn).transfer(canceler, cancelFee);
-			IERC20(tokenIn).transfer(msg.sender, refundFee);
-			IERC20(tokenIn).transfer(recipient, netAmount);
+			IERC20(tokenIn).safeTransfer(canceler, cancelFee);
+			IERC20(tokenIn).safeTransfer(msg.sender, refundFee);
+			IERC20(tokenIn).safeTransfer(recipient, netAmount);
 		}
 
 		emit OrderRefunded(refundMsg.orderHash, netAmount);
@@ -738,12 +738,12 @@ contract MayanSwift is ReentrancyGuard {
 				revert InvalidWormholeFee();
 			}
 			if (referrerAmount > 0) {
-				payable(params.referrerAddr).transfer(referrerAmount);
+				payViaCall(params.referrerAddr, referrerAmount);
 			}
 			if (protocolAmount > 0) {
-				payable(feeManager.feeCollector()).transfer(protocolAmount);
+				payViaCall(feeManager.feeCollector(), protocolAmount);
 			}
-			payable(params.destAddr).transfer(netAmount);
+			payViaCall(params.destAddr, netAmount);
 		} else {
 			if (params.gasDrop > 0) {
 				uint256 gasDrop = deNormalizeAmount(params.gasDrop, NATIVE_DECIMALS);
@@ -753,7 +753,7 @@ contract MayanSwift is ReentrancyGuard {
 				) {
 					revert InvalidGasDrop();
 				}
-				payable(params.destAddr).transfer(gasDrop);
+				payViaCall(params.destAddr, gasDrop);
 			} else if (
 				(params.batch && msg.value != 0) ||
 				(!params.batch && msg.value != wormhole.messageFee())
@@ -937,6 +937,11 @@ contract MayanSwift is ReentrancyGuard {
 			refundMsg.cancelFee,
 			refundMsg.refundFee
 		);
+	}
+
+	function payViaCall(address to, uint256 amount) internal {
+		(bool success, ) = payable(to).call{value: amount}('');
+		require(success, 'payment failed');
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
