@@ -34,6 +34,23 @@ contract FulfillHelper {
 		}
 	}
 
+	function directFulfill(
+		address tokenIn,
+		uint256 amountIn,
+		address mayanProtocol,
+		bytes calldata mayanData,
+		PermitParams calldata permitParams
+	) external payable {
+		if (mayanProtocols[mayanProtocol]) {
+			revert UnsupportedProtocol();
+		}
+		pullTokenIn(tokenIn, amountIn, permitParams);
+		maxApproveIfNeeded(tokenIn, mayanProtocol, amountIn);
+
+		(bool success, bytes memory returnedData) = mayanProtocol.call{value: msg.value}(mayanData);
+		require(success, string(returnedData));
+	}
+
 	function fulfillWithEth(
 		uint256 amountIn,
 		address fulfillToken,
