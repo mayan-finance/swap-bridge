@@ -49,6 +49,7 @@ contract MayanCircle is ReentrancyGuard {
 	error InvalidEmitter();
 	error InvalidDestAddr();
 	error InvalidMintRecipient();
+	error InvalidRedeemFee();
 
 	enum Action {
 		NONE,
@@ -193,6 +194,9 @@ contract MayanCircle is ReentrancyGuard {
 		if (paused) {
 			revert Paused();
 		}
+		if (redeemFee >= amountIn) {
+			revert InvalidRedeemFee();
+		}
 
 		uint256 burnAmount = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
@@ -255,7 +259,9 @@ contract MayanCircle is ReentrancyGuard {
 		if (paused) {
 			revert Paused();
 		}
-
+		if (params.redeemFee >= params.amountIn) {
+			revert InvalidRedeemFee();
+		}
 		if (params.tokenOut == bytes32(0) && params.gasDrop > 0) {
 			revert InvalidGasDrop();
 		}
