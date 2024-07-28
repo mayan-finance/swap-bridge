@@ -352,7 +352,7 @@ contract MayanCircle is ReentrancyGuard {
 		IERC20(localToken).safeTransfer(msg.sender, uint256(redeemMsg.redeemFee));
 		address recipient = truncateAddress(redeemMsg.destAddr);
 		IERC20(localToken).safeTransfer(recipient, amount - uint256(redeemMsg.redeemFee));
-		payViaCall(recipient, denormalizedGasDrop);
+		payEth(recipient, denormalizedGasDrop, false);
 	}
 
 	function redeemWithLockedFee(bytes memory cctpMsg, bytes memory cctpSigs, bytes32 unlockerAddr) external nonReentrant payable returns (uint64 sequence) {
@@ -370,7 +370,7 @@ contract MayanCircle is ReentrancyGuard {
 
 		uint256 wormholeFee = wormhole.messageFee();
 		if (msg.value > wormholeFee) {
-			payViaCall(mintRecipient, msg.value - wormholeFee);
+			payEth(mintRecipient, msg.value - wormholeFee, false);
 		}
 
 		UnlockFeeMsg memory unlockMsg = UnlockFeeMsg({
@@ -392,7 +392,7 @@ contract MayanCircle is ReentrancyGuard {
 	function refineFee(uint32 cctpNonce, uint32 cctpDomain, bytes32 destAddr, bytes32 unlockerAddr) external nonReentrant payable returns (uint64 sequence) {
 		uint256 wormholeFee = wormhole.messageFee();
 		if (msg.value > wormholeFee) {
-			payViaCall(truncateAddress(destAddr), msg.value - wormholeFee);
+			payEth(truncateAddress(destAddr), msg.value - wormholeFee, false);
 		}
 
 		UnlockRefinedFeeMsg memory unlockMsg = UnlockRefinedFeeMsg({
@@ -600,7 +600,7 @@ contract MayanCircle is ReentrancyGuard {
 
 		address destAddr = truncateAddress(order.destAddr);
 		if (gasDrop > 0) {
-			payViaCall(destAddr, gasDrop);
+			payEth(destAddr, gasDrop, false);
 		}
 
 		IERC20(localToken).safeTransfer(msg.sender, order.redeemFee);
@@ -640,19 +640,19 @@ contract MayanCircle is ReentrancyGuard {
 		address destAddr = truncateAddress(fulfillMsg.destAddr);
 		if (tokenOut == address(0)) {
 			if (referrerAmount > 0) {
-				payViaCall(referrerAddr, referrerAmount);
+				payEth(referrerAddr, referrerAmount, false);
 			}
 			if (protocolAmount > 0) {
-				payViaCall(feeManager.feeCollector(), protocolAmount);
+				payEth(feeManager.feeCollector(), protocolAmount, false);
 			}
-			payViaCall(destAddr, amount - referrerAmount - protocolAmount);
+			payEth(destAddr, amount - referrerAmount - protocolAmount, true);
 		} else {
 			if (fulfillMsg.gasDrop > 0) {
 				uint256 gasDrop = deNormalizeAmount(fulfillMsg.gasDrop, ETH_DECIMALS);
 				if (msg.value != gasDrop) {
 					revert InvalidGasDrop();
 				}
-				payViaCall(destAddr, gasDrop);
+				payEth(destAddr, gasDrop, false);
 			}
 			if (referrerAmount > 0) {
 				IERC20(tokenOut).safeTransfer(referrerAddr, referrerAmount);
@@ -856,9 +856,11 @@ contract MayanCircle is ReentrancyGuard {
 		}
 	}
 
-	function payViaCall(address to, uint256 amount) internal {
+	function payEth(address to, uint256 amount, bool revertOnFailure) internal {
 		(bool success, ) = payable(to).call{value: amount}('');
-		require(success, 'payment failed');
+		if (revertOnFailure) {
+			require(success, 'payment failed');
+		}
 	}
 
 	function decimalsOf(address token) internal view returns(uint8) {
@@ -922,7 +924,7 @@ contract MayanCircle is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		require(to != address(0), 'transfer to the zero address');
-		payViaCall(to, amount);
+		payEth(to, amount, true);
 	}
 
 	function changeGuardian(address newGuardian) public {
