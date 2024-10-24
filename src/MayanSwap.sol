@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import "./interfaces/ITokenBridge.sol";
 import "./interfaces/IWormhole.sol";
@@ -11,7 +12,7 @@ import "./interfaces/IWormhole.sol";
 import "./MayanStructs.sol";
 import "./libs/BytesLib.sol";
 
-contract MayanSwap {
+contract MayanSwap is ReentrancyGuard {
 	event Redeemed(uint16 indexed emitterChainId, bytes32 indexed emitterAddress, uint64 indexed sequence);
 
 	using SafeERC20 for IERC20;
@@ -56,7 +57,7 @@ contract MayanSwap {
 		weth = IWETH(_weth);
 	}
 
-	function swap(RelayerFees memory relayerFees, Recepient memory recipient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria, address tokenIn, uint256 amountIn) public payable returns (uint64 sequence) {
+	function swap(RelayerFees memory relayerFees, Recepient memory recipient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria, address tokenIn, uint256 amountIn) nonReentrant external payable returns (uint64 sequence) {
 		require(paused == false, 'contract is paused');
 		require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
 		if (criteria.unwrap) {
@@ -107,7 +108,7 @@ contract MayanSwap {
 		}(0, encoded, tokenBridge.finality());
 	}
 
-	function wrapAndSwapETH(RelayerFees memory relayerFees, Recepient memory recipient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria) public payable returns (uint64 sequence) {
+	function wrapAndSwapETH(RelayerFees memory relayerFees, Recepient memory recipient, bytes32 tokenOutAddr, uint16 tokenOutChainId, Criteria memory criteria) nonReentrant external payable returns (uint64 sequence) {
 		require(paused == false, 'contract is paused');
 		require(block.timestamp <= criteria.transferDeadline, 'deadline passed');
 		if (criteria.unwrap) {
@@ -127,7 +128,7 @@ contract MayanSwap {
 
 		uint dust = msg.value - 2*wormholeFee - amountIn;
 		if (dust > 0) {
-			payable(msg.sender).transfer(dust);
+			payViaCall(msg.sender, dust);
 		}
 
 		MayanStructs.Swap memory swapStruct = MayanStructs.Swap({
@@ -162,7 +163,7 @@ contract MayanSwap {
 		}(0, encoded, tokenBridge.finality());
 	}
 
-	function redeem(bytes memory encodedVm) public payable {
+	function redeem(bytes memory encodedVm) nonReentrant external payable {
 		IWormhole.VM memory vm = tokenBridge.wormhole().parseVM(encodedVm);
 		ITokenBridge.TransferWithPayload memory transferPayload = tokenBridge.parseTransferWithPayload(vm.payload);
 		MayanStructs.Redeem memory redeemPayload = parseRedeemPayload(transferPayload.payload);
@@ -189,13 +190,13 @@ contract MayanSwap {
 		if (redeemPayload.gasDrop > 0) {
 			uint256 gasDrop = deNormalizeAmount(uint256(redeemPayload.gasDrop), decimalsOf(address(weth)));
 			require(msg.value == gasDrop, 'incorrect gas drop');
-			payable(recipient).transfer(gasDrop);
+			payViaCall(recipient, gasDrop);
 		}
 
 		if (redeemPayload.unwrap && tokenAddr == address(weth)) {
 			weth.withdraw(amount);
-			payable(msg.sender).transfer(relayerFee);
-			payable(recipient).transfer(amount - relayerFee);
+			payViaCall(msg.sender, relayerFee);
+			payViaCall(recipient, amount - relayerFee);
 		} else {
 			IERC20(tokenAddr).safeTransfer(msg.sender, relayerFee);
 			IERC20(tokenAddr).safeTransfer(recipient, amount - relayerFee);
@@ -204,7 +205,7 @@ contract MayanSwap {
 		emit Redeemed(vm.emitterChainId, vm.emitterAddress, vm.sequence);
 	}
 
-	function redeemAndUnwrap(bytes memory encodedVm) public {
+	function redeemAndUnwrap(bytes memory encodedVm) nonReentrant external {
 		IWormhole.VM memory vm = tokenBridge.wormhole().parseVM(encodedVm);
 
 		ITokenBridge.TransferWithPayload memory transferPayload = tokenBridge.parseTransferWithPayload(vm.payload);
@@ -228,8 +229,8 @@ contract MayanSwap {
 		uint256 relayerFee = deNormalizeAmount(uint256(redeemPayload.relayerFee), 18);
 		require(amount > relayerFee, 'relayer fee exeeds amount');
 
-		payable(msg.sender).transfer(relayerFee);
-		payable(recipient).transfer(amount - relayerFee);
+		payViaCall(msg.sender, relayerFee);
+		payViaCall(recipient, amount - relayerFee);
 
 		emit Redeemed(vm.emitterChainId, vm.emitterAddress, vm.sequence);
 	}
@@ -259,6 +260,11 @@ contract MayanSwap {
 		} else {
 			require(index == encoded.length, 'invalid payload length');
 		}
+	}
+
+	function payViaCall(address to, uint256 amount) internal {
+		(bool success, ) = payable(to).call{value: amount}('');
+		require(success, 'payment failed');
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
@@ -331,7 +337,7 @@ contract MayanSwap {
 	function sweepEth(uint256 amount, address payable to) public {
 		require(msg.sender == guardian, 'only guardian');
 		require(to != address(0), 'transfer to the zero address');
-		to.transfer(amount);
+		payViaCall(to, amount);
 	}
 
 	function getWeth() public view returns(address) {

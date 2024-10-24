@@ -11,15 +11,41 @@ async function main(swiftAddr: string, destAuth: string) {
 	console.log({ random });
 	const [owner] = await ethers.getSigners();
 
-	let destAuthority;
+	let destEmitter;
 	if (!destAuth) {
-		destAuthority = HashZero;
+		destEmitter = HashZero;
 	} else {
-		destAuthority = ethToBytes32(destAuth);
+		destEmitter = ethToBytes32(destAuth);
 	}
-	const tokenOut = await base58ToBytes32('G7ZhadccuZVi8r7u4FjEneJxY1G9fQPG882bRmkYs3ay');
-	// function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint8 destChainId, bytes32 referrerAddr, bytes32 random, bytes32 destEmitter)
-	const tx = await swift.createOrderWithEth(base58ToBytes32('B5JAT9cFiwRmDfUmue2GyX2tQ6dLaL7KUr2g2PjxfDxA'), 1, 0, base58ToBytes32('35V85aqyssnda35TYsjgd45vTVuK8swuzsht59LNNuDU'), 1, base58ToBytes32("3f6rtWrGw6Vp3RLUw5hVfe6sG5ePzThpFB7Vi8LL54mD"), random, destAuthority, { value: 2059000000000 });
+
+	// function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint8 destChainId, Criteria criteria, bytes32 random, bytes32 destEmitter)
+	/*
+	struct OrderParams {
+		bytes32 tokenOut;
+		uint64 minAmountOut;
+		uint64 gasDrop;
+		bytes32 destAddr;
+		uint16 destChainId;
+		bytes32 referrerAddr;
+		uint8 referrerBps;
+		uint8 auctionMode;
+		bytes32 random;
+		bytes32 destEmitter;
+	} */
+	const params = {
+		tokenOut: base58ToBytes32('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'),
+		minAmountOut: 2_000_000,
+		gasDrop: 0,
+		destAddr: base58ToBytes32('35V85aqyssnda35TYsjgd45vTVuK8swuzsht59LNNuDU'),
+		destChainId: 1,
+		referrerAddr: base58ToBytes32("3f6rtWrGw6Vp3RLUw5hVfe6sG5ePzThpFB7Vi8LL54mD"),
+		referrerBps: 3,
+		auctionMode: 2,
+		random,
+		destEmitter
+	}
+
+	const tx = await swift.createOrderWithEth(params, { value: "1500000000000000" });
 	const receipt = await tx.wait();
 	console.log({ receipt });
 }

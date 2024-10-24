@@ -4,50 +4,122 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/IWormhole.sol";
-import "./interfaces/IWETH.sol";
+import "./interfaces/IFeeManager.sol";
 import "./libs/BytesLib.sol";
+import "./libs/SignatureVerifier.sol";
 
-contract MayanSwift {
+contract MayanSwift is ReentrancyGuard {
 	event OrderCreated(bytes32 key);
-	event OrderFulfilled(bytes32 key);
+	event OrderFulfilled(bytes32 key, uint64 sequence, uint256 netAmount);
 	event OrderUnlocked(bytes32 key);
-	event OrderCanceled(bytes32 key);
-	event OrderRefunded(bytes32 key);
+	event OrderCanceled(bytes32 key, uint64 sequence);
+	event OrderRefunded(bytes32 key, uint256 netAmount);
 
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
+	using SignatureVerifier for bytes;
 
-	IWormhole wormhole;
-	address public feeCollector;
-	uint16 public auctionChainId;
-	bytes32 public auctionAddr;
-	bytes32 public solanaEmitter;
+	uint16 constant SOLANA_CHAIN_ID = 1;
+	uint8 constant BPS_FEE_LIMIT = 50;
+	uint8 constant NATIVE_DECIMALS = 18;
+
+	IWormhole public immutable wormhole;
+	uint16 public immutable auctionChainId;
+	bytes32 public immutable auctionAddr;
+	bytes32 public immutable solanaEmitter;
+	IFeeManager public feeManager;
 	uint8 public consistencyLevel;
 	address public guardian;
 	address public nextGuardian;
 	bool public paused;
 
-	mapping(bytes32 => Order) private orders;
+	bytes32 private domainSeparator;
+
+	mapping(bytes32 => Order) public orders;
+	mapping(bytes32 => UnlockMsg) public unlockMsgs;
+
+
+	error Paused();
+	error Unauthorized();
+	error InvalidAction();
+	error InvalidBpsFee();
+	error InvalidOrderStatus();
+	error InvalidOrderHash();
+	error InvalidEmitterChain();
+	error InvalidEmitterAddress();
+	error InvalidSrcChain();
+	error OrderNotExists();
+	error SmallAmountIn();
+	error FeesTooHigh();
+	error InvalidGasDrop();
+	error InvalidDestChain();
+	error DuplicateOrder();
+	error InvalidAmount();
+	error DeadlineViolation();
+	error InvalidWormholeFee();
+	error InvalidAuctionMode();
+	error InvalidEvmAddr();
 
 	struct Order {
-		bytes32 destEmitter;
-		uint16 destChainId;
 		Status status;
+		uint64 amountIn;
+		uint16 destChainId;
+	}
+
+	struct OrderParams {
+		bytes32 trader;
+		bytes32 tokenOut;
+		uint64 minAmountOut;
+		uint64 gasDrop;
+		uint64 cancelFee;
+		uint64 refundFee;
+		uint64 deadline;
+		bytes32 destAddr;
+		uint16 destChainId;
+		bytes32 referrerAddr;
+		uint8 referrerBps;
+		uint8 auctionMode;
+		bytes32 random;
+	}
+
+	struct PermitParams {
+		uint256 value;
+		uint256 deadline;
+		uint8 v;
+		bytes32 r;
+		bytes32 s;
 	}
 
 	struct Key {
 		bytes32 trader;
 		uint16 srcChainId;
 		bytes32 tokenIn;
-		uint64 amountIn;
+		bytes32 destAddr;
+		uint16 destChainId;
 		bytes32 tokenOut;
 		uint64 minAmountOut;
 		uint64 gasDrop;
-		bytes32 destAddr;
-		uint16 destChainId;
+		uint64 cancelFee;
+		uint64 refundFee;
+		uint64 deadline;
 		bytes32 referrerAddr;
+		uint8 referrerBps;
+		uint8 protocolBps;
+		uint8 auctionMode;
 		bytes32 random;
+	}
+
+	struct PaymentParams {
+		address destAddr;
+		address tokenOut;
+		uint64 promisedAmount;
+		uint64 gasDrop;
+		address referrerAddr;
+		uint8 referrerBps;
+		uint8 protocolBps;
+		bool batch;
 	}
 
 	enum Status {
@@ -58,13 +130,37 @@ contract MayanSwift {
 		REFUNDED
 	}
 
+	enum Action {
+		NONE,
+		FULFILL,
+		UNLOCK,
+		REFUND,
+		BATCH_UNLOCK
+	}
+
+	enum AuctionMode {
+		NONE,
+		BYPASS,
+		ENGLISH
+	}
+
 	struct UnlockMsg {
 		uint8 action;
 		bytes32 orderHash;
 		uint16 srcChainId;
 		bytes32 tokenIn;
-		uint64 amountIn;
 		bytes32 recipient;
+	}
+
+	struct RefundMsg {
+		uint8 action;
+		bytes32 orderHash;
+		uint16 srcChainId;
+		bytes32 tokenIn;
+		bytes32 recipient;
+		bytes32 canceler;
+		uint64 cancelFee;
+		uint64 refundFee;	
 	}
 
 	struct FulfillMsg {
@@ -74,277 +170,626 @@ contract MayanSwift {
 		bytes32 destAddr;
 		bytes32 driver;
 		bytes32 tokenOut;
-		uint64 amountPromised;
+		uint64 promisedAmount;
 		uint64 gasDrop;
+		uint64 deadline;
 		bytes32 referrerAddr;
 		uint8 referrerBps;
-		uint8 mayanBps;
+		uint8 protocolBps;
 		uint16 srcChainId;
 		bytes32 tokenIn;
-		uint64 amountIn;
 	}
 
-	constructor(address _wormhole, address _feeCollector, uint16 _auctionChainId, bytes32 _auctionAddr, bytes32 _solanaEmitter, uint8 _consistencyLevel) {
+	struct TransferParams {
+		address from;
+		uint256 validAfter;
+		uint256 validBefore;
+	}
+
+	constructor(
+		address _wormhole,
+		address _feeManager,
+		uint16 _auctionChainId,
+		bytes32 _auctionAddr,
+		bytes32 _solanaEmitter,
+		uint8 _consistencyLevel
+	) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
-		feeCollector = _feeCollector;
+		feeManager = IFeeManager(_feeManager);
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
 		solanaEmitter = _solanaEmitter;
 		consistencyLevel = _consistencyLevel;
+
+		domainSeparator = keccak256(abi.encode(
+			keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)"),
+			keccak256("Mayan Swift"),
+			uint256(block.chainid),
+			address(this)
+		));
 	}
 
-	function createOrderWithEth(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, bytes32 referrerAddr, bytes32 random, bytes32 destEmitter) public payable returns (bytes32 orderHash) {
-		require(paused == false, 'contract is paused');
-
-		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, 18));
-		require(normlizedAmountIn > 0, 'small amount in');
-		if (tokenOut == bytes32(0)) {
-			require(gasDrop == 0, 'gas drop not supported');
+	function createOrderWithEth(OrderParams memory params) nonReentrant external payable returns (bytes32 orderHash) {
+		if (paused) {
+			revert Paused();
 		}
 
-		Key memory key = Key({
-			trader: bytes32(uint256(uint160(msg.sender))),
-			srcChainId: wormhole.chainId(),
-			tokenIn: bytes32(0),
-			amountIn: normlizedAmountIn,
-			tokenOut: tokenOut,
-			minAmountOut: minAmountOut,
-			gasDrop: gasDrop,
-			destAddr: destAddr,
-			destChainId: destChainId,
-			referrerAddr: referrerAddr,
-			random: random
-		});
+		uint64 normlizedAmountIn = uint64(normalizeAmount(msg.value, NATIVE_DECIMALS));
+		if (normlizedAmountIn == 0) {
+			revert SmallAmountIn();
+		}
+		if (params.cancelFee + params.refundFee >= normlizedAmountIn) {
+			revert FeesTooHigh();
+		}
+
+		if (params.tokenOut == bytes32(0) && params.gasDrop != 0) {
+			revert InvalidGasDrop();
+		}
+
+		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, address(0), params.tokenOut, params.destChainId, params.referrerBps);
+		if (params.referrerBps > BPS_FEE_LIMIT || protocolBps > BPS_FEE_LIMIT) {
+			revert InvalidBpsFee();
+		}
+
+		Key memory key = buildKey(params, bytes32(0), wormhole.chainId(), protocolBps);
+
 		orderHash = keccak256(encodeKey(key));
 
-		require(destChainId != wormhole.chainId(), 'same src and dest chains');
-		require(destChainId > 0, 'invalid dest chain id');
-		require(orders[orderHash].destChainId == 0, 'duplicate order hash');
-
-		orders[orderHash].destChainId = destChainId;
-		orders[orderHash].status = Status.CREATED;
-		if (destEmitter != bytes32(0)) {
-			orders[orderHash].destEmitter = destEmitter;
+		if (params.destChainId == 0 || params.destChainId == wormhole.chainId()) {
+			revert InvalidDestChain();
 		}
-
-		emit OrderCreated(orderHash);
-	}
-
-	function createOrderWithToken(bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 destAddr, uint16 destChainId, address tokenIn, uint256 amountIn, bytes32 referrerAddr, bytes32 random, bytes32 destEmitter) public returns (bytes32 orderHash) {
-		require(paused == false, 'contract is paused');
-
-		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
-		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-		amountIn = IERC20(tokenIn).balanceOf(address(this)) - balance;
-
-		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
-		require(normlizedAmountIn > 0, 'small amount in');
-		if (tokenOut == bytes32(0)) {
-			require(gasDrop == 0, 'gas drop not supported');
+		if (orders[orderHash].destChainId != 0) {
+			revert DuplicateOrder();
 		}
-
-		Key memory key = Key({
-			trader: bytes32(uint256(uint160(msg.sender))),
-			srcChainId: wormhole.chainId(),
-			tokenIn: bytes32(uint256(uint160(tokenIn))),
-			amountIn: normlizedAmountIn,
-			tokenOut: tokenOut,
-			minAmountOut: minAmountOut,
-			gasDrop: gasDrop,
-			destAddr: destAddr,
-			destChainId: destChainId,
-			referrerAddr: referrerAddr,
-			random: random
-		});
-		orderHash = keccak256(encodeKey(key));
-
-		require(destChainId != wormhole.chainId(), 'same src and dest chain');
-		require(destChainId > 0, 'invalid dest chain id');
-		require(orders[orderHash].destChainId == 0, 'duplicate key');
 
 		orders[orderHash] = Order({
-			destEmitter: destEmitter,
-			destChainId: destChainId,
-			status: Status.CREATED
+			status: Status.CREATED,
+			amountIn: normlizedAmountIn,
+			destChainId: params.destChainId
 		});
+		
+		emit OrderCreated(orderHash);
+	}
 
-		if (destEmitter != bytes32(0)) {
-			orders[orderHash].destEmitter = destEmitter;
+	function createOrderWithToken(
+		address tokenIn,
+		uint256 amountIn,
+		OrderParams memory params
+	) nonReentrant external returns (bytes32 orderHash) {
+		if (paused) {
+			revert Paused();
 		}
+
+		amountIn = pullTokensFrom(tokenIn, amountIn, msg.sender);
+		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
+		if (normlizedAmountIn == 0) {
+			revert SmallAmountIn();
+		}
+		if (params.cancelFee + params.refundFee >= normlizedAmountIn) {
+			revert FeesTooHigh();
+		}
+		if (params.tokenOut == bytes32(0) && params.gasDrop != 0) {
+			revert InvalidGasDrop();
+		}
+
+		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
+		if (params.referrerBps > BPS_FEE_LIMIT || protocolBps > BPS_FEE_LIMIT) {
+			revert InvalidBpsFee();
+		}
+
+		Key memory key = buildKey(params, bytes32(uint256(uint160(tokenIn))), wormhole.chainId(), protocolBps);
+
+		orderHash = keccak256(encodeKey(key));
+
+		if (params.destChainId == 0 || params.destChainId == wormhole.chainId()) {
+			revert InvalidDestChain();
+		}
+		if (orders[orderHash].destChainId != 0) {
+			revert DuplicateOrder();
+		}
+
+		orders[orderHash] = Order({
+			status: Status.CREATED,
+			amountIn: normlizedAmountIn,
+			destChainId: params.destChainId
+		});
 
 		emit OrderCreated(orderHash);
 	}
 
-	function fulfillOrder(bytes memory encodedVm, bytes32 recepient) public payable returns (uint64 sequence) {
+	function createOrderWithSig(
+		address tokenIn,
+		uint256 amountIn,
+		OrderParams memory params,
+		uint256 submissionFee,
+		bytes calldata signedOrderHash,
+		PermitParams calldata permitParams
+	) nonReentrant external returns (bytes32 orderHash) {
+		if (paused) {
+			revert Paused();
+		}
+
+		address trader = truncateAddress(params.trader);
+		uint256 allowance = IERC20(tokenIn).allowance(trader, address(this));
+		if (allowance < amountIn + submissionFee) {
+			execPermit(tokenIn, trader, permitParams);
+		}
+		amountIn = pullTokensFrom(tokenIn, amountIn, trader);
+		if (submissionFee > 0) {
+			IERC20(tokenIn).safeTransferFrom(trader, msg.sender, submissionFee);
+		}
+
+		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
+		if (normlizedAmountIn == 0) {
+			revert SmallAmountIn();
+		}
+
+		if (params.cancelFee + params.refundFee >= normlizedAmountIn) {
+			revert FeesTooHigh();
+		}
+		if (params.tokenOut == bytes32(0) && params.gasDrop != 0) {
+			revert InvalidGasDrop();
+		}
+
+		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
+		if (params.referrerBps > BPS_FEE_LIMIT || protocolBps > BPS_FEE_LIMIT) {
+			revert InvalidBpsFee();
+		}
+
+		orderHash = keccak256(encodeKey(buildKey(params, bytes32(uint256(uint160(tokenIn))), wormhole.chainId(), protocolBps)));
+
+		signedOrderHash.verify(hashTypedData(orderHash, amountIn, submissionFee), trader);
+
+		if (params.destChainId == 0 || params.destChainId == wormhole.chainId()) {
+			revert InvalidDestChain();
+		}
+		if (orders[orderHash].destChainId != 0) {
+			revert DuplicateOrder();
+		}
+
+		orders[orderHash] = Order({
+			status: Status.CREATED,
+			amountIn: normlizedAmountIn,
+			destChainId: params.destChainId
+		});
+
+		emit OrderCreated(orderHash);
+	}
+
+	function fulfillOrder(
+		uint256 fulfillAmount,
+		bytes memory encodedVm,
+		bytes32 recepient,
+		bool batch
+	) nonReentrant public payable returns (uint64 sequence) {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
-		require(vm.emitterChainId == auctionChainId, 'invalid auction chain');
-		require(vm.emitterAddress == auctionAddr, 'invalid auction address');
+		if (vm.emitterChainId != auctionChainId) {
+			revert InvalidEmitterChain();
+		}
+		if (vm.emitterAddress != auctionAddr) {
+			revert InvalidEmitterAddress();
+		}
 
 		FulfillMsg memory fulfillMsg = parseFulfillPayload(vm.payload);
 
-		require(fulfillMsg.destChainId == wormhole.chainId(), 'wrong chain id');
-		require(truncateAddress(fulfillMsg.driver) == msg.sender, 'invalid driver');
+		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
+		if (tokenOut != address(0)) {
+			fulfillAmount = pullTokensFrom(tokenOut, fulfillAmount, msg.sender);
+		}
 
-		require(orders[fulfillMsg.orderHash].status == Status.CREATED, 'invalid order status');
+		if (fulfillMsg.destChainId != wormhole.chainId()) {
+			revert InvalidDestChain();
+		}
+		if (truncateAddress(fulfillMsg.driver) != tx.origin) {
+			revert Unauthorized();
+		}
+
+		if (block.timestamp > fulfillMsg.deadline) {
+			revert DeadlineViolation();
+		}
+
+		if (orders[fulfillMsg.orderHash].status != Status.CREATED) {
+			revert InvalidOrderStatus();
+		}
 		orders[fulfillMsg.orderHash].status = Status.FULFILLED;
 
-		makePayments(fulfillMsg);
+		PaymentParams memory paymentParams = PaymentParams({
+			destAddr: truncateAddress(fulfillMsg.destAddr),
+			tokenOut: tokenOut,
+			promisedAmount: fulfillMsg.promisedAmount,
+			gasDrop: fulfillMsg.gasDrop,
+			referrerAddr: truncateAddress(fulfillMsg.referrerAddr),
+			referrerBps: fulfillMsg.referrerBps,
+			protocolBps: fulfillMsg.protocolBps,
+			batch: batch
+		});
+		uint256 netAmount = makePayments(fulfillAmount, paymentParams);
 
 		UnlockMsg memory unlockMsg = UnlockMsg({
-			action: 2,
+			action: uint8(Action.UNLOCK),
 			orderHash: fulfillMsg.orderHash,
 			srcChainId: fulfillMsg.srcChainId,
 			tokenIn: fulfillMsg.tokenIn,
-			amountIn: fulfillMsg.amountIn,
 			recipient: recepient
 		});
 
-		bytes memory encoded = encodeUnlockMsg(unlockMsg);
+		if (batch) {
+			unlockMsgs[fulfillMsg.orderHash] = unlockMsg;
+		} else {
+			bytes memory encoded = encodeUnlockMsg(unlockMsg);
+			sequence = wormhole.publishMessage{
+				value : wormhole.messageFee()
+			}(0, encoded, consistencyLevel);
+		}
 
-		sequence = wormhole.publishMessage{
-			value : wormhole.messageFee()
-		}(0, encoded, consistencyLevel);
-
-		emit OrderFulfilled(fulfillMsg.orderHash);
+		emit OrderFulfilled(fulfillMsg.orderHash, sequence, netAmount);
 	}
 
-	function unlockOrder(bytes memory encodedVm) public {
-		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
-
-		require(valid, reason);
-
-		UnlockMsg memory swift = parseUnlockPayload(vm.payload);
-		Order memory order = getOrder(swift.orderHash);
-
-		require(vm.emitterChainId == order.destChainId, 'invalid emitter chain');
-		require(vm.emitterAddress == order.destEmitter, 'invalid emitter address');
-
-		require(swift.srcChainId == wormhole.chainId(), 'invalid source chain');
-		require(order.destChainId > 0, 'order not exists');
-		require(order.status == Status.CREATED, 'order is not created');
-
-		if (swift.action == 2) {
-			orders[swift.orderHash].status = Status.UNLOCKED;
-		} else if (swift.action == 3) {
-			orders[swift.orderHash].status = Status.REFUNDED;
-		} else {
-			revert('invalid action');
+	function fulfillSimple(
+		uint256 fulfillAmount,
+		bytes32 orderHash,
+		uint16 srcChainId,
+		bytes32 tokenIn,
+		uint8 protocolBps,
+		OrderParams memory params,
+		bytes32 recepient,
+		bool batch
+	) public nonReentrant payable returns (uint64 sequence) {
+		if (params.auctionMode != uint8(AuctionMode.BYPASS)) {
+			revert InvalidAuctionMode();
 		}
+
+		address tokenOut = truncateAddress(params.tokenOut);
+		if (tokenOut != address(0)) {
+			fulfillAmount = pullTokensFrom(tokenOut, fulfillAmount, msg.sender);
+		}	
+
+		params.destChainId = wormhole.chainId();
+		Key memory key = buildKey(params, tokenIn, srcChainId, protocolBps);
+
+		bytes32 computedOrderHash = keccak256(encodeKey(key));
+
+		if (computedOrderHash != orderHash) {
+			revert InvalidOrderHash();
+		}
+
+		if (block.timestamp > key.deadline) {
+			revert DeadlineViolation();
+		}
+
+		if (orders[computedOrderHash].status != Status.CREATED) {
+			revert InvalidOrderStatus();
+		}
+		orders[computedOrderHash].status = Status.FULFILLED;
+
+		PaymentParams memory paymentParams = PaymentParams({
+			destAddr: truncateAddress(key.destAddr),
+			tokenOut: tokenOut,
+			promisedAmount: key.minAmountOut,
+			gasDrop: key.gasDrop,
+			referrerAddr: truncateAddress(key.referrerAddr),
+			referrerBps: key.referrerBps,
+			protocolBps: protocolBps,
+			batch: batch
+		});
+		uint256 netAmount = makePayments(fulfillAmount, paymentParams);
+
+		UnlockMsg memory unlockMsg = UnlockMsg({
+			action: uint8(Action.UNLOCK),
+			orderHash: computedOrderHash,
+			srcChainId: key.srcChainId,
+			tokenIn: key.tokenIn,
+			recipient: recepient
+		});
+
+		if (batch) {
+			unlockMsgs[computedOrderHash] = unlockMsg;
+		} else {
+			bytes memory encoded = encodeUnlockMsg(unlockMsg);
+			sequence = wormhole.publishMessage{
+				value : wormhole.messageFee()
+			}(0, encoded, consistencyLevel);
+		}
+
+		emit OrderFulfilled(computedOrderHash, sequence, netAmount);
+	}
+
+	function unlockOrder(UnlockMsg memory unlockMsg, Order memory order) internal {
+		if (unlockMsg.srcChainId != wormhole.chainId()) {
+			revert InvalidSrcChain();
+		}
+		if (order.destChainId == 0) {
+			revert OrderNotExists();
+		}
+		if (order.status != Status.CREATED) {
+			revert InvalidOrderStatus();
+		}
+		orders[unlockMsg.orderHash].status = Status.UNLOCKED;
 		
-		address recipient = truncateAddress(swift.recipient);
-		address tokenIn = truncateAddress(swift.tokenIn);
+		address recipient = truncateAddress(unlockMsg.recipient);
+		address tokenIn = truncateAddress(unlockMsg.tokenIn);
 		uint8 decimals;
 		if (tokenIn == address(0)) {
-			decimals = 18;
+			decimals = NATIVE_DECIMALS;
 		} else {
 			decimals = decimalsOf(tokenIn);
 		}
 
-		uint256 amountIn = deNormalizeAmount(swift.amountIn, decimals);
+		uint256 amountIn = deNormalizeAmount(order.amountIn, decimals);
 		if (tokenIn == address(0)) {
-			payable(recipient).transfer(amountIn);
+			payViaCall(recipient, amountIn);
 		} else {
 			IERC20(tokenIn).safeTransfer(recipient, amountIn);
 		}
 		
-		if (swift.action == 2) {
-			emit OrderUnlocked(swift.orderHash);
-		} else if (swift.action == 3) {
-			emit OrderRefunded(swift.orderHash);
-		}
+		emit OrderUnlocked(unlockMsg.orderHash);
 	}
 
-	function cancelOrder(bytes32 trader, uint16 srcChainId, bytes32 tokenIn, uint64 amountIn, bytes32 tokenOut, uint64 minAmountOut, uint64 gasDrop, bytes32 referrerAddr, bytes32 random) public payable returns (uint64 sequence) {
-		Key memory key = Key({
-			trader: trader,
-			srcChainId: srcChainId,
-			tokenIn: tokenIn,
-			amountIn: amountIn,
-			tokenOut: tokenOut,
-			minAmountOut: minAmountOut,
-			gasDrop: gasDrop,
-			destAddr: bytes32(uint256(uint160(msg.sender))),
-			destChainId: wormhole.chainId(),
-			referrerAddr: referrerAddr,
-			random: random
-		});
+	function cancelOrder(
+		bytes32 tokenIn,
+		OrderParams memory params,
+		uint16 srcChainId,
+		uint8 protocolBps,
+		bytes32 canceler
+	) public nonReentrant payable returns (uint64 sequence) {
+
+		params.destChainId = wormhole.chainId();
+		Key memory key = buildKey(params, tokenIn, srcChainId, protocolBps);
+
 		bytes32 orderHash = keccak256(encodeKey(key));
 		Order memory order = orders[orderHash];
 
-		require(order.status == Status.CREATED, 'invalid order status');
+		if (block.timestamp <= key.deadline) {
+			revert DeadlineViolation();
+		}
+
+		if (order.status != Status.CREATED) {
+			revert InvalidOrderStatus();
+		}
 		orders[orderHash].status = Status.CANCELED;
 
-		UnlockMsg memory cancelMsg = UnlockMsg({
-			action: 3,
+		RefundMsg memory refundMsg = RefundMsg({
+			action: uint8(Action.REFUND),
 			orderHash: orderHash,
 			srcChainId: key.srcChainId,
 			tokenIn: key.tokenIn,
-			amountIn: key.amountIn,
-			recipient: trader
+			recipient: key.trader,
+			canceler: canceler,
+			cancelFee: key.cancelFee,
+			refundFee: key.refundFee
 		});
 
-		bytes memory encoded = encodeUnlockMsg(cancelMsg);
+		bytes memory encoded = encodeRefundMsg(refundMsg);
 
 		sequence = wormhole.publishMessage{
 			value : msg.value
 		}(0, encoded, consistencyLevel);
 
-		emit OrderCanceled(orderHash);
+		emit OrderCanceled(orderHash, sequence);
 	}
 
-	function makePayments(FulfillMsg memory fulfillMsg) internal {
-		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
-		uint8 decimals;
-		if (tokenOut == address(0)) {
-			decimals = 18;
-		} else {
-			decimals = decimalsOf(tokenOut);
+	function refundOrder(bytes memory encodedVm) nonReentrant() public {
+		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+
+		RefundMsg memory refundMsg = parseRefundPayload(vm.payload);
+		Order memory order = orders[refundMsg.orderHash];
+
+		if (refundMsg.srcChainId != wormhole.chainId()) {
+			revert InvalidSrcChain();
+		}
+		if (order.destChainId == 0) {
+			revert OrderNotExists();
+		}
+		if (order.status != Status.CREATED) {
+			revert InvalidOrderStatus();
+		}
+		orders[refundMsg.orderHash].status = Status.REFUNDED;
+
+		if (vm.emitterChainId != order.destChainId) {
+			revert InvalidEmitterChain();
+		}
+		if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
+			revert InvalidEmitterAddress();
 		}
 
-		uint256 amountPromised = deNormalizeAmount(fulfillMsg.amountPromised, decimals);
-		address referrerAddr = truncateAddress(fulfillMsg.referrerAddr);
+		address recipient = truncateAddress(refundMsg.recipient);
+		// no error if canceler is invalid
+		address canceler = address(uint160(uint256(refundMsg.canceler)));
+		address tokenIn = truncateAddress(refundMsg.tokenIn);
 		
-		uint256 amountReferrer = 0;
-		if (referrerAddr != address(0) && fulfillMsg.referrerBps != 0) {
-			amountReferrer = amountPromised * fulfillMsg.referrerBps / 10000;
-		}
-
-		uint256 amountMayan = 0;
-		if (fulfillMsg.mayanBps != 0) {
-			amountMayan = amountPromised * fulfillMsg.mayanBps / 10000;
-		}
-
-		address destAddr = truncateAddress(fulfillMsg.destAddr);
-		uint256 wormholeFee = wormhole.messageFee();
-		if (tokenOut == address(0)) {
-			require(msg.value == amountPromised + wormholeFee, 'invalid amount value');
-			if (amountReferrer > 0) {
-				payable(referrerAddr).transfer(amountReferrer);
-			}
-			if (amountMayan > 0) {
-				payable(feeCollector).transfer(amountMayan);
-			}
-			payable(destAddr).transfer(amountPromised - amountReferrer - amountMayan);
+		uint8 decimals;
+		if (tokenIn == address(0)) {
+			decimals = NATIVE_DECIMALS;
 		} else {
-			if (fulfillMsg.gasDrop > 0) {
-				uint256 gasDrop = deNormalizeAmount(fulfillMsg.gasDrop, 18);
-				require(msg.value == gasDrop + wormholeFee, 'invalid gas drop value');
-				payable(destAddr).transfer(gasDrop);
-			} else {
-				require(msg.value == wormholeFee, 'invalid bridge fee value');
+			decimals = decimalsOf(tokenIn);
+		}
+
+		uint256 cancelFee = deNormalizeAmount(refundMsg.cancelFee, decimals);
+		uint256 refundFee = deNormalizeAmount(refundMsg.refundFee, decimals);
+		uint256 amountIn = deNormalizeAmount(order.amountIn, decimals);
+
+		uint256 netAmount = amountIn - cancelFee - refundFee;
+		if (tokenIn == address(0)) {
+			payViaCall(canceler, cancelFee);
+			payViaCall(msg.sender, refundFee);
+			payViaCall(recipient, netAmount);
+		} else {
+			IERC20(tokenIn).safeTransfer(canceler, cancelFee);
+			IERC20(tokenIn).safeTransfer(msg.sender, refundFee);
+			IERC20(tokenIn).safeTransfer(recipient, netAmount);
+		}
+
+		emit OrderRefunded(refundMsg.orderHash, netAmount);
+	}
+
+	function unlockSingle(bytes memory encodedVm) nonReentrant public {
+		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+
+		UnlockMsg memory unlockMsg = parseUnlockPayload(vm.payload);
+		Order memory order = orders[unlockMsg.orderHash];
+
+		if (vm.emitterChainId != order.destChainId) {
+			revert InvalidEmitterChain();
+		}
+		if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
+			revert InvalidEmitterAddress();
+		}
+
+		unlockOrder(unlockMsg, order);
+	}
+
+	function unlockBatch(bytes memory encodedVm) nonReentrant public {
+		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+
+		uint8 action = vm.payload.toUint8(0);
+		uint index = 1;
+		if (action != uint8(Action.BATCH_UNLOCK)) {
+			revert InvalidAction();
+		}
+
+		uint16 count = vm.payload.toUint16(index);
+		index += 2;
+		for (uint i=0; i<count; i++) {
+			UnlockMsg memory unlockMsg = UnlockMsg({
+				action: uint8(Action.UNLOCK),
+				orderHash: vm.payload.toBytes32(index),
+				srcChainId: vm.payload.toUint16(index + 32),
+				tokenIn: vm.payload.toBytes32(index + 34),
+				recipient: vm.payload.toBytes32(index + 66)
+			});
+			index += 98;
+			Order memory order = orders[unlockMsg.orderHash];
+			if (order.status != Status.CREATED) {
+				continue;
+			}
+			if (vm.emitterChainId != order.destChainId) {
+				revert InvalidEmitterChain();
+			}
+			if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
+				revert InvalidEmitterAddress();
+			}
+
+			unlockOrder(unlockMsg, order);
+		}
+	}
+
+	function postBatch(bytes32[] memory orderHashes) public payable returns (uint64 sequence) {
+		bytes memory encoded = abi.encodePacked(uint8(Action.BATCH_UNLOCK), uint16(orderHashes.length));
+		for(uint i=0; i<orderHashes.length; i++) {
+			UnlockMsg memory unlockMsg = unlockMsgs[orderHashes[i]];
+			if (unlockMsg.action != uint8(Action.UNLOCK)) {
+				revert InvalidAction();
+			}
+			bytes memory encodedUnlock = abi.encodePacked(
+				unlockMsg.orderHash,
+				unlockMsg.srcChainId,
+				unlockMsg.tokenIn,
+				unlockMsg.recipient
+			);
+			encoded = abi.encodePacked(encoded, encodedUnlock);
+		}
+		
+		sequence = wormhole.publishMessage{
+			value : msg.value
+		}(0, encoded, consistencyLevel);
+	}
+
+	function makePayments(
+		uint256 fulfillAmount,
+		PaymentParams memory params
+	) internal returns (uint256 netAmount) {
+		uint8 decimals;
+		if (params.tokenOut == address(0)) {
+			decimals = NATIVE_DECIMALS;
+		} else {
+			decimals = decimalsOf(params.tokenOut);
+		}
+		
+		uint256 referrerAmount = 0;
+		if (params.referrerAddr != address(0) && params.referrerBps != 0) {
+			referrerAmount = fulfillAmount * params.referrerBps / 10000;
+		}
+
+		uint256 protocolAmount = 0;
+		if (params.protocolBps != 0) {
+			protocolAmount = fulfillAmount * params.protocolBps / 10000;
+		}
+
+		netAmount = fulfillAmount - referrerAmount - protocolAmount;
+		uint256 promisedAmount = deNormalizeAmount(params.promisedAmount, decimals);
+		if (netAmount < promisedAmount) {
+			revert InvalidAmount();
+		}
+
+		if (params.tokenOut == address(0)) {
+			if (
+				(params.batch && msg.value != fulfillAmount) ||
+				(!params.batch && msg.value != fulfillAmount + wormhole.messageFee())
+			) {
+				revert InvalidWormholeFee();
+			}
+			if (referrerAmount > 0) {
+				payViaCall(params.referrerAddr, referrerAmount);
+			}
+			if (protocolAmount > 0) {
+				payViaCall(feeManager.feeCollector(), protocolAmount);
+			}
+			payViaCall(params.destAddr, netAmount);
+		} else {
+			if (params.gasDrop > 0) {
+				uint256 gasDrop = deNormalizeAmount(params.gasDrop, NATIVE_DECIMALS);
+				if (
+					(params.batch && msg.value != gasDrop) ||
+					(!params.batch && msg.value != gasDrop + wormhole.messageFee())
+				) {
+					revert InvalidGasDrop();
+				}
+				payViaCall(params.destAddr, gasDrop);
+			} else if (
+				(params.batch && msg.value != 0) ||
+				(!params.batch && msg.value != wormhole.messageFee())
+			) {
+				revert InvalidWormholeFee();
 			}
 			
-			if (amountReferrer > 0) {
-				IERC20(tokenOut).safeTransferFrom(msg.sender, referrerAddr, amountReferrer);
+			if (referrerAmount > 0) {
+				IERC20(params.tokenOut).safeTransfer(params.referrerAddr, referrerAmount);
 			}
-			if (amountMayan > 0) {
-				IERC20(tokenOut).safeTransferFrom(msg.sender, feeCollector, amountMayan);
+			if (protocolAmount > 0) {
+				IERC20(params.tokenOut).safeTransfer(feeManager.feeCollector(), protocolAmount);
 			}
-			IERC20(tokenOut).safeTransferFrom(msg.sender, destAddr, amountPromised - amountReferrer - amountMayan);
+			IERC20(params.tokenOut).safeTransfer(params.destAddr, netAmount);
 		}
+	}
+
+	function buildKey(OrderParams memory params, bytes32 tokenIn, uint16 srcChainId, uint8 protocolBps) internal pure returns (Key memory) {
+		return Key({
+			trader: params.trader,
+			srcChainId: srcChainId,
+			tokenIn: tokenIn,
+			tokenOut: params.tokenOut,
+			minAmountOut: params.minAmountOut,
+			gasDrop: params.gasDrop,
+			cancelFee: params.cancelFee,
+			refundFee: params.refundFee,
+			deadline: params.deadline,
+			destAddr: params.destAddr,
+			destChainId: params.destChainId,
+			referrerAddr: params.referrerAddr,
+			referrerBps: params.referrerBps,
+			protocolBps: protocolBps,
+			auctionMode: params.auctionMode,
+			random: params.random
+		});
 	}
 
 	function parseFulfillPayload(bytes memory encoded) public pure returns (FulfillMsg memory fulfillMsg) {
@@ -353,27 +798,35 @@ contract MayanSwift {
 		fulfillMsg.action = encoded.toUint8(index);
 		index += 1;
 
-		require(fulfillMsg.action == 1, 'invalid action');
+		if (fulfillMsg.action != uint8(Action.FULFILL)) {
+			revert InvalidAction();
+		}
 
 		fulfillMsg.orderHash = encoded.toBytes32(index);
+		index += 32;
+
+		fulfillMsg.srcChainId = encoded.toUint16(index);
+		index += 2;
+
+		fulfillMsg.tokenIn = encoded.toBytes32(index);
+		index += 32;
+
+		fulfillMsg.destAddr = encoded.toBytes32(index);
 		index += 32;
 
 		fulfillMsg.destChainId = encoded.toUint16(index);
 		index += 2;
 
-		fulfillMsg.destAddr = encoded.toBytes32(index);
-		index += 32;
-
-		fulfillMsg.driver = encoded.toBytes32(index);
-		index += 32;
-
 		fulfillMsg.tokenOut = encoded.toBytes32(index);
 		index += 32;
 
-		fulfillMsg.amountPromised = encoded.toUint64(index);
+		fulfillMsg.promisedAmount = encoded.toUint64(index);
 		index += 8;
 
 		fulfillMsg.gasDrop = encoded.toUint64(index);
+		index += 8;
+
+		fulfillMsg.deadline = encoded.toUint64(index);
 		index += 8;
 
 		fulfillMsg.referrerAddr = encoded.toBytes32(index);
@@ -382,19 +835,11 @@ contract MayanSwift {
 		fulfillMsg.referrerBps = encoded.toUint8(index);
 		index += 1;
 
-		fulfillMsg.mayanBps = encoded.toUint8(index);
+		fulfillMsg.protocolBps = encoded.toUint8(index);
 		index += 1;
 
-		fulfillMsg.srcChainId = encoded.toUint16(index);
-		index += 2;
-
-		fulfillMsg.tokenIn = encoded.toBytes32(index);
+		fulfillMsg.driver = encoded.toBytes32(index);
 		index += 32;
-
-		fulfillMsg.amountIn = encoded.toUint64(index);
-		index += 8;
-
-		require(encoded.length == index, 'invalid msg lenght');
 	}
 
 	function parseUnlockPayload(bytes memory encoded) public pure returns (UnlockMsg memory unlockMsg) {
@@ -402,6 +847,10 @@ contract MayanSwift {
 
 		unlockMsg.action = encoded.toUint8(index);
 		index += 1;
+
+		if (unlockMsg.action != uint8(Action.UNLOCK)) {
+			revert InvalidAction();
+		}
 
 		unlockMsg.orderHash = encoded.toBytes32(index);
 		index += 32;
@@ -412,13 +861,40 @@ contract MayanSwift {
 		unlockMsg.tokenIn = encoded.toBytes32(index);
 		index += 32;
 
-		unlockMsg.amountIn = encoded.toUint64(index);
-		index += 8;
-
 		unlockMsg.recipient = encoded.toBytes32(index);
 		index += 32;
+	}
 
-		require(encoded.length == index, 'invalid msg lenght');
+	function parseRefundPayload(bytes memory encoded) public pure returns (RefundMsg memory refundMsg) {
+		uint index = 0;
+
+		refundMsg.action = encoded.toUint8(index);
+		index += 1;
+
+		if (refundMsg.action != uint8(Action.REFUND)) {
+			revert InvalidAction();
+		}
+
+		refundMsg.orderHash = encoded.toBytes32(index);
+		index += 32;
+
+		refundMsg.srcChainId = encoded.toUint16(index);
+		index += 2;
+
+		refundMsg.tokenIn = encoded.toBytes32(index);
+		index += 32;
+
+		refundMsg.recipient = encoded.toBytes32(index);
+		index += 32;
+
+		refundMsg.canceler = encoded.toBytes32(index);
+		index += 32;
+
+		refundMsg.cancelFee = encoded.toUint64(index);
+		index += 8;
+
+		refundMsg.refundFee = encoded.toUint64(index);
+		index += 8;
 	}
 
 	function encodeKey(Key memory key) internal pure returns (bytes memory encoded) {
@@ -426,15 +902,18 @@ contract MayanSwift {
 			key.trader,
 			key.srcChainId,
 			key.tokenIn,
-			key.amountIn,
+			key.destAddr,
+			key.destChainId,
 			key.tokenOut,
 			key.minAmountOut,
 			key.gasDrop,
-			key.destAddr,
-			key.destChainId,
+			key.cancelFee,
+			key.refundFee,
+			key.deadline,
 			key.referrerAddr,
-			key.random
+			key.referrerBps
 		);
+		encoded = encoded.concat(abi.encodePacked(key.protocolBps, key.auctionMode, key.random));
 	}
 
 	function encodeUnlockMsg(UnlockMsg memory unlockMsg) internal pure returns (bytes memory encoded) {
@@ -443,13 +922,32 @@ contract MayanSwift {
 			unlockMsg.orderHash,
 			unlockMsg.srcChainId,
 			unlockMsg.tokenIn,
-			unlockMsg.amountIn,
 			unlockMsg.recipient
 		);
 	}
 
+	function encodeRefundMsg(RefundMsg memory refundMsg) internal pure returns (bytes memory encoded) {
+		encoded = abi.encodePacked(
+			refundMsg.action,
+			refundMsg.orderHash,
+			refundMsg.srcChainId,
+			refundMsg.tokenIn,
+			refundMsg.recipient,
+			refundMsg.canceler,
+			refundMsg.cancelFee,
+			refundMsg.refundFee
+		);
+	}
+
+	function payViaCall(address to, uint256 amount) internal {
+		(bool success, ) = payable(to).call{value: amount}('');
+		require(success, 'payment failed');
+	}
+
 	function truncateAddress(bytes32 b) internal pure returns (address) {
-		require(bytes12(b) == 0, 'invalid EVM address');
+		if (bytes12(b) != 0) {
+			revert InvalidEvmAddr();
+		}
 		return address(uint160(uint256(b)));
 	}
 
@@ -472,40 +970,84 @@ contract MayanSwift {
 		return amount;
 	}
 
+	function hashTypedData(bytes32 orderHash, uint256 amountIn, uint256 submissionFee) internal view returns (bytes32) {
+		bytes memory encoded = abi.encode(keccak256("CreateOrder(bytes32 OrderId,uint256 InputAmount,uint256 SubmissionFee)"), orderHash, amountIn, submissionFee);
+		return toTypedDataHash(domainSeparator, keccak256(encoded));
+	}
+
+	function toTypedDataHash(bytes32 _domainSeparator, bytes32 _structHash) internal pure returns (bytes32 digest) {
+		assembly {
+			let ptr := mload(0x40)
+			mstore(ptr, "\x19\x01")
+			mstore(add(ptr, 0x02), _domainSeparator)
+			mstore(add(ptr, 0x22), _structHash)
+			digest := keccak256(ptr, 0x42)
+		}
+	}
+
+	function pullTokensFrom(address tokenIn, uint256 amount, address from) internal returns (uint256) {
+		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
+		IERC20(tokenIn).safeTransferFrom(from, address(this), amount);
+		return IERC20(tokenIn).balanceOf(address(this)) - balance;
+	}
+
+	function execPermit(
+		address token,
+		address owner,
+		PermitParams calldata permitParams
+	) internal {
+		IERC20Permit(token).permit(
+			owner,
+			address(this),
+			permitParams.value,
+			permitParams.deadline,
+			permitParams.v,
+			permitParams.r,
+			permitParams.s
+		);
+	}
+
 	function setPause(bool _pause) public {
-		require(msg.sender == guardian, 'only guardian');
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
 		paused = _pause;
 	}
 
-	function setFeeCollector(address _feeCollector) public {
-		require(msg.sender == guardian, 'only guardian');
-		feeCollector = _feeCollector;
+	function setFeeManager(address _feeManager) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		feeManager = IFeeManager(_feeManager);
 	}
 
 	function setConsistencyLevel(uint8 _consistencyLevel) public {
-		require(msg.sender == guardian, 'only guardian');
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
 		consistencyLevel = _consistencyLevel;
 	}
 
 	function changeGuardian(address newGuardian) public {
-		require(msg.sender == guardian, 'only guardian');
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
 		nextGuardian = newGuardian;
 	}
 
 	function claimGuardian() public {
-		require(msg.sender == nextGuardian, 'only next guardian');
+		if (msg.sender != nextGuardian) {
+			revert Unauthorized();
+		}
 		guardian = nextGuardian;
 	}
 
-	function getOrder(bytes32 orderHash) public view returns (Order memory order) {
-		order = orders[orderHash];
-		if (order.destEmitter == bytes32(0)) {
-			if (order.destChainId == 1) {
-				order.destEmitter = solanaEmitter;
-			} else {
-				order.destEmitter = bytes32(uint256(uint160(address(this))));
-			}
+	function getOrders(bytes32[] memory orderHashes) public view returns (Order[] memory) {
+		Order[] memory result = new Order[](orderHashes.length);
+		for (uint i=0; i<orderHashes.length; i++) {
+			result[i] = orders[orderHashes[i]];
 		}
+		return result;
 	}
 
 	receive() external payable {}
