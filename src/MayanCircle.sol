@@ -240,7 +240,7 @@ contract MayanCircle is ReentrancyGuard {
 		bytes32 destAddr,
 		uint32 destDomain,
 		uint8 payloadType,
-		bytes32 customPayload
+		bytes memory customPayload
 	) external payable nonReentrant returns (uint64 sequence) {
 		if (paused) {
 			revert Paused();
@@ -261,6 +261,11 @@ contract MayanCircle is ReentrancyGuard {
 			getCaller(destDomain)
 		);
 
+		bytes32 customPayloadHash;
+		if (payloadType == 2) {
+			customPayloadHash = keccak256(customPayload);
+		}
+
 		BridgeWithFeeMsg memory	bridgeMsg = BridgeWithFeeMsg({
 			action: uint8(Action.BRIDGE_WITH_FEE),
 			payloadType: payloadType,
@@ -271,7 +276,7 @@ contract MayanCircle is ReentrancyGuard {
 			redeemFee: redeemFee,
 			burnAmount: uint64(amountIn),
 			burnToken: bytes32(uint256(uint160(tokenIn))),
-			customPayload: customPayload
+			customPayload: customPayloadHash
 		});
 
 		bytes memory payload = abi.encodePacked(keccak256(encodeBridgeWithFee(bridgeMsg)));
@@ -907,7 +912,7 @@ contract MayanCircle is ReentrancyGuard {
 		});
 	}
 
-	function validateEmitter(bytes32 emitter) internal {
+	function validateEmitter(bytes32 emitter) view internal {
 		if (emitter != solanaEmitter
 			&& emitter != suiEmitter
 		 	&& truncateAddress(emitter) != address(this)) {
