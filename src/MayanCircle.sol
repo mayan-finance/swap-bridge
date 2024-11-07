@@ -643,7 +643,6 @@ contract MayanCircle is ReentrancyGuard {
 			cctpSourceDomain: cctpMsg.toUint32(CCTP_DOMAIN_INDEX)
 		});
 		encodedOrder = encodedOrder.concat(encodeOrderFields(orderFields));
-		encodedOrder = encodedOrder.concat(abi.encodePacked(cctpMsg.toUint64(CCTP_NONCE_INDEX), cctpMsg.toUint32(CCTP_DOMAIN_INDEX)));
 		if (vm.payload.length != 32 || keccak256(encodedOrder) != vm.payload.toBytes32(0)) {
 			revert InvalidPayload();
 		}
