@@ -291,7 +291,8 @@ contract MayanCircle is ReentrancyGuard {
 		uint256 amountIn,
 		uint64 gasDrop,
 		uint256 redeemFee,
-		uint32 destDomain
+		uint32 destDomain,
+		bytes32 destAddr
 	) external nonReentrant returns (uint64 cctpNonce) {
 		if (paused) {
 			revert Paused();
@@ -304,12 +305,10 @@ contract MayanCircle is ReentrancyGuard {
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 
 		maxApproveIfNeeded(tokenIn, address(cctpTokenMessenger), amountIn - redeemFee);
-
-		bytes32 mintRecipient = getMintRecipient(destDomain, tokenIn);
-		cctpNonce = cctpTokenMessenger.depositForBurnWithCaller(amountIn - redeemFee, destDomain, mintRecipient, tokenIn, getCaller(destDomain));
+		cctpNonce = cctpTokenMessenger.depositForBurnWithCaller(amountIn - redeemFee, destDomain, destAddr, tokenIn, getCaller(destDomain));
 
 		feeStorage[cctpNonce] = FeeLock({
-			destAddr: mintRecipient,
+			destAddr: destAddr,
 			gasDrop: gasDrop,
 			token: tokenIn,
 			redeemFee: redeemFee
