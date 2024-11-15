@@ -9,7 +9,6 @@ contract MayanOkxForwarder {
 
     address public guardian;
     mapping(address => bool) public swapProtocols;
-    mapping(address => address) public tokenContractMap;
 
     error UnsupportedProtocol();
 
@@ -25,25 +24,18 @@ contract MayanOkxForwarder {
         swapProtocols[swapProtocol] = enabled;
     }
 
-    function setTokenContract(address token, address cont) public {
-        require(msg.sender == guardian, "only guardian");
-        tokenContractMap[token] = cont;
-    }
-
     function approveAndForward(
         address tokenIn,
         uint256 amountIn,
+		address tokenContract,
         address swapProtocol,
         bytes calldata swapData
     ) external payable {
-        if (
-            !swapProtocols[swapProtocol] ||
-            tokenContractMap[tokenIn] == address(0)
-        ) {
+        if (!swapProtocols[swapProtocol]) {
             revert UnsupportedProtocol();
         }
 
-        maxApproveIfNeeded(tokenIn, tokenContractMap[tokenIn], amountIn);
+        maxApproveIfNeeded(tokenIn, tokenContract, amountIn);
 
         (bool success, bytes memory returnedData) = swapProtocol.call{value: 0}(
             swapData
