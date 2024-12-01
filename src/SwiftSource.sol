@@ -63,6 +63,7 @@ contract SwiftSource is ReentrancyGuard {
 	error InvalidWormholeFee();
 	error InvalidAuctionMode();
 	error InvalidEvmAddr();
+	error InvalidPayload();
 
 	struct Order {
 		Status status;
@@ -498,31 +499,55 @@ contract SwiftSource is ReentrancyGuard {
 		require(valid, reason);
 
 		uint8 action = vm.payload.toUint8(0);
-		uint index = 1;
 		if (action != uint8(Action.BATCH_UNLOCK)) {
 			revert InvalidAction();
 		}
 
-		uint16 count = vm.payload.toUint16(index);
+		// skip action (1 byte)
+		processUnlocks(vm.payload, 1, vm.emitterChainId, vm.emitterAddress);
+	}
+	
+	function unlockCompressedBatch(bytes memory encodedVm, bytes memory encodedPayload) nonReentrant public {
+		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+
+		uint8 action = vm.payload.toUint8(0);
+		if (action != uint8(Action.BATCH_UNLOCK)) {
+			revert InvalidAction();
+		}
+		bytes32 computedHash = keccak256(encodedPayload);
+		bytes32 msgHash = vm.payload.toBytes32(1);
+
+		if (computedHash != msgHash) {
+			revert InvalidPayload();
+		}
+
+		// skip action and hash (33 bytes)
+		processUnlocks(encodedPayload, 33, vm.emitterChainId, vm.emitterAddress);
+	}
+
+	function processUnlocks(bytes memory payload, uint index, uint16 emitterChainId, bytes32 emitterAddress) internal {
+		uint16 count = payload.toUint16(index);
 		index += 2;
 		for (uint i=0; i<count; i++) {
 			UnlockMsg memory unlockMsg = UnlockMsg({
 				action: uint8(Action.UNLOCK),
-				orderHash: vm.payload.toBytes32(index),
-				srcChainId: vm.payload.toUint16(index + 32),
-				tokenIn: vm.payload.toBytes32(index + 34),
-				recipient: vm.payload.toBytes32(index + 66),
-				fulfillTime: vm.payload.toUint64(index + 98)
+				orderHash: payload.toBytes32(index),
+				srcChainId: payload.toUint16(index + 32),
+				tokenIn: payload.toBytes32(index + 34),
+				recipient: payload.toBytes32(index + 66),
+				fulfillTime: payload.toUint64(index + 98)
 			});
 			index += 106;
 			Order memory order = orders[unlockMsg.orderHash];
 			if (order.status != Status.CREATED) {
 				continue;
 			}
-			if (vm.emitterChainId != order.destChainId) {
+			if (emitterChainId != order.destChainId) {
 				revert InvalidEmitterChain();
 			}
-			if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
+			if (emitterAddress != solanaEmitter && truncateAddress(emitterAddress) != address(this)) {
 				revert InvalidEmitterAddress();
 			}
 

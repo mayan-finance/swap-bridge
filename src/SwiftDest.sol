@@ -157,7 +157,8 @@ contract SwiftDest is ReentrancyGuard {
 		FULFILL,
 		UNLOCK,
 		REFUND,
-		BATCH_UNLOCK
+		BATCH_UNLOCK,
+		COMPRESSED_UNLOCK
 	}
 
 	enum AuctionMode {
@@ -435,8 +436,8 @@ contract SwiftDest is ReentrancyGuard {
 		emit OrderCanceled(orderHash, sequence);
 	}
 
-	function postBatch(bytes32[] memory orderHashes) public payable returns (uint64 sequence) {
-		bytes memory encoded = abi.encodePacked(uint8(Action.BATCH_UNLOCK), uint16(orderHashes.length));
+	function postBatch(bytes32[] memory orderHashes, bool compressed) public payable returns (uint64 sequence) {
+		bytes memory encoded = abi.encodePacked(uint16(orderHashes.length));
 		for(uint i=0; i<orderHashes.length; i++) {
 			UnlockMsg memory unlockMsg = unlockMsgs[orderHashes[i]];
 			if (unlockMsg.action != uint8(Action.UNLOCK)) {
@@ -450,10 +451,17 @@ contract SwiftDest is ReentrancyGuard {
 			);
 			encoded = abi.encodePacked(encoded, encodedUnlock);
 		}
+
+		bytes memory payload;
+		if (compressed) {
+			payload = abi.encodePacked(uint8(Action.COMPRESSED_UNLOCK), keccak256(encoded));
+		} else {
+			payload = abi.encodePacked(uint8(Action.BATCH_UNLOCK), encoded);
+		}
 		
 		sequence = wormhole.publishMessage{
 			value : msg.value
-		}(0, encoded, consistencyLevel);
+		}(0, payload, consistencyLevel);
 	}
 
 	function settleWithPayload(
