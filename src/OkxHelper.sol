@@ -41,6 +41,8 @@ contract MayanOkxForwarder {
             swapData
         );
         require(success, string(returnedData));
+
+        transferBackRemaining(tokenIn, amountIn);
     }
 
     function maxApproveIfNeeded(
@@ -55,5 +57,23 @@ contract MayanOkxForwarder {
             token.safeApprove(spender, 0);
             token.safeApprove(spender, type(uint256).max);
         }
+    }
+
+    function transferBackRemaining(address token, uint256 maxAmount) internal {
+        uint256 remaining = IERC20(token).balanceOf(address(this));
+        if (remaining > 0 && remaining <= maxAmount) {
+            IERC20(token).safeTransfer(msg.sender, remaining);
+        }
+    }
+
+    function rescueToken(address token, uint256 amount, address to) public {
+        require(msg.sender == guardian, "only guardian");
+        IERC20(token).safeTransfer(to, amount);
+    }
+
+    function rescueEth(uint256 amount, address payable to) public {
+        require(msg.sender == guardian, "only guardian");
+        require(to != address(0), "transfer to the zero address");
+        to.transfer(amount);
     }
 }
