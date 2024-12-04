@@ -35,6 +35,7 @@ contract OkxHelper {
             revert UnsupportedProtocol();
         }
 
+        pullTokenIn(tokenIn, amountIn);
         maxApproveIfNeeded(tokenIn, tokenContract, amountIn);
 
         (bool success, bytes memory returnedData) = swapProtocol.call{value: 0}(
@@ -43,6 +44,10 @@ contract OkxHelper {
         require(success, string(returnedData));
 
         transferBackRemaining(tokenIn, amountIn);
+    }
+
+    function pullTokenIn(address tokenIn, uint256 amountIn) internal {
+        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
     }
 
     function maxApproveIfNeeded(
