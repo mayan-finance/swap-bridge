@@ -172,6 +172,9 @@ contract SwiftSource is ReentrancyGuard {
 		bytes32 orderHash;
 		uint16 srcChainId;
 		bytes32 tokenIn;
+		bytes32	referrerAddr;
+		uint8 referrerBps;
+		uint8 protocolBps;		
 		bytes32 recipient;
 		uint64 fulfillTime;
 	}
@@ -185,7 +188,7 @@ contract SwiftSource is ReentrancyGuard {
 		bytes32 canceler;
 		uint64 cancelFee;
 		uint64 refundFee;	
-	}
+	}	
 
 	struct FulfillMsg {
 		uint8 action;
@@ -409,11 +412,34 @@ contract SwiftSource is ReentrancyGuard {
 			decimals = decimalsOf(tokenIn);
 		}
 
-		uint256 amountIn = deNormalizeAmount(order.amountIn, decimals);
+		uint64 normalizedReferrerFee = order.amountIn * unlockMsg.referrerBps / 10000;
+		address referrerAddress = address(uint160(uint256(unlockMsg.referrerAddr)));
+
+		uint64 normalizedProtocolFee = order.amountIn * unlockMsg.protocolBps / 10000;
+		address feeCollector = feeManager.feeCollector();
+
+		uint64 netAmount = order.amountIn - normalizedReferrerFee - normalizedProtocolFee;
+
 		if (tokenIn == address(0)) {
-			payEth(recipient, amountIn);
+			if (normalizedReferrerFee > 0 && referrerAddress != address(0)) {
+				payEth(referrerAddress, deNormalizeAmount(normalizedReferrerFee, decimals), false);
+			}
+			if (normalizedProtocolFee > 0 && feeCollector != address(0)) {
+				payEth(feeCollector, deNormalizeAmount(normalizedProtocolFee, decimals), false);
+			}
+			if (netAmount > 0) {
+				payEth(recipient, deNormalizeAmount(netAmount, decimals), true);
+			}
 		} else {
-			IERC20(tokenIn).safeTransfer(recipient, amountIn);
+			if (normalizedReferrerFee > 0 && referrerAddress != address(0)) {
+				IERC20(tokenIn).safeTransfer(referrerAddress, deNormalizeAmount(normalizedReferrerFee, decimals));
+			}
+			if (normalizedProtocolFee > 0 && feeCollector != address(0)) {
+				IERC20(tokenIn).safeTransfer(feeCollector, deNormalizeAmount(normalizedProtocolFee, decimals));
+			}
+			if (netAmount > 0) {
+				IERC20(tokenIn).safeTransfer(recipient, deNormalizeAmount(netAmount, decimals));
+			}
 		}
 		
 		emit OrderUnlocked(unlockMsg.orderHash);
@@ -463,9 +489,9 @@ contract SwiftSource is ReentrancyGuard {
 
 		uint256 netAmount = amountIn - cancelFee - refundFee;
 		if (tokenIn == address(0)) {
-			payEth(canceler, cancelFee);
-			payEth(msg.sender, refundFee);
-			payEth(recipient, netAmount);
+			payEth(canceler, cancelFee, false);
+			payEth(msg.sender, refundFee, false);
+			payEth(recipient, netAmount, true);
 		} else {
 			IERC20(tokenIn).safeTransfer(canceler, cancelFee);
 			IERC20(tokenIn).safeTransfer(msg.sender, refundFee);
@@ -536,10 +562,13 @@ contract SwiftSource is ReentrancyGuard {
 				orderHash: payload.toBytes32(index),
 				srcChainId: payload.toUint16(index + 32),
 				tokenIn: payload.toBytes32(index + 34),
-				recipient: payload.toBytes32(index + 66),
-				fulfillTime: payload.toUint64(index + 98)
+				referrerAddr: payload.toBytes32(index + 66),
+				referrerBps: payload.toUint8(index + 98),
+				protocolBps: payload.toUint8(index + 99),
+				recipient: payload.toBytes32(index + 100),
+				fulfillTime: payload.toUint64(index + 132)
 			});
-			index += 106;
+			index += 140;
 			Order memory order = orders[unlockMsg.orderHash];
 			if (order.status != Status.CREATED) {
 				continue;
@@ -625,6 +654,15 @@ contract SwiftSource is ReentrancyGuard {
 
 		unlockMsg.tokenIn = encoded.toBytes32(index);
 		index += 32;
+
+		unlockMsg.referrerAddr = encoded.toBytes32(index);
+		index += 32;
+
+		unlockMsg.referrerBps = encoded.toUint8(index);
+		index += 1;
+
+		unlockMsg.protocolBps = encoded.toUint8(index);
+		index += 1;
 
 		unlockMsg.recipient = encoded.toBytes32(index);
 		index += 32;
@@ -713,9 +751,11 @@ contract SwiftSource is ReentrancyGuard {
 		);
 	}
 
-	function payEth(address to, uint256 amount) internal {
+	function payEth(address to, uint256 amount, bool revertOnFailure) internal {
 		(bool success, ) = payable(to).call{value: amount}('');
-		require(success, 'payment failed');
+		if (revertOnFailure) {
+			require(success, 'payment failed');
+		}
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
