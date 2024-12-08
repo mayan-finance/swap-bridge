@@ -23,8 +23,7 @@ contract MayanCircle is ReentrancyGuard {
 	uint32 public immutable localDomain;
 	uint16 public immutable auctionChainId;
 	bytes32 public immutable auctionAddr;
-	bytes32 public immutable solanaEmitter;
-	bytes32 public immutable suiEmitter;
+
 	uint8 public consistencyLevel;
 	address public guardian;
 	address nextGuardian;
@@ -32,18 +31,21 @@ contract MayanCircle is ReentrancyGuard {
 
 	mapping(uint64 => FeeLock) public feeStorage;
 
+	mapping(uint16 => bytes32) public chainIdToEmitter;
 	mapping(uint32 => bytes32) public domainToCaller;
 	mapping(bytes32 => bytes32) public keyToMintRecipient; // key is domain + local token address
 
 	uint8 constant ETH_DECIMALS = 18;
+
 	uint32 constant SOLANA_DOMAIN = 5;
 	uint16 constant SOLANA_CHAIN_ID = 1;
+
 	uint32 constant SUI_DOMAIN = 8;
-	uint16 constant SUI_CHAIN_ID = 21;
 
 	uint256 constant CCTP_DOMAIN_INDEX = 4;
 	uint256 constant CCTP_NONCE_INDEX = 12;
 	uint256 constant CCTP_TOKEN_INDEX = 120;
+	uint256 constant CCTP_RECIPIENT_INDEX = 152;
 	uint256 constant CCTP_AMOUNT_INDEX = 184;
 
 	event OrderFulfilled(uint32 sourceDomain, uint64 sourceNonce, uint256 amount);
@@ -58,12 +60,17 @@ contract MayanCircle is ReentrancyGuard {
 	error InvalidGasDrop();
 	error InvalidAction();
 	error InvalidEmitter();
+	error EmitterAlreadySet();
 	error InvalidDestAddr();
 	error InvalidMintRecipient();
 	error InvalidRedeemFee();
 	error InvalidPayload();
 	error CallerNotSet();
-	error MintRecepientNotSet();
+	error MintRecipientNotSet();
+	error MintRecipientAlreadySet();
+	error InvalidCaller();
+	error CallerAlreadySet();
+	error DeadlineViolation();
 
 	enum Action {
 		NONE,
@@ -216,8 +223,6 @@ contract MayanCircle is ReentrancyGuard {
 		address _feeManager,
 		uint16 _auctionChainId,
 		bytes32 _auctionAddr,
-		bytes32 _solanaEmitter,
-		bytes32 _suiEmitter,
 		uint8 _consistencyLevel
 	) {
 		cctpTokenMessenger = ITokenMessenger(_cctpTokenMessenger);
@@ -225,8 +230,6 @@ contract MayanCircle is ReentrancyGuard {
 		feeManager = IFeeManager(_feeManager);
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
-		solanaEmitter = _solanaEmitter;
-		suiEmitter = _suiEmitter;
 		consistencyLevel = _consistencyLevel;
 		localDomain = ITokenMessenger(_cctpTokenMessenger).localMessageTransmitter().localDomain();
 		guardian = msg.sender;
@@ -373,13 +376,18 @@ contract MayanCircle is ReentrancyGuard {
 		}(0, payload, consistencyLevel);
 	}
 
-	function redeemWithFee(bytes memory cctpMsg, bytes memory cctpSigs, bytes memory encodedVm, BridgeWithFeeParams memory bridgeParams) external nonReentrant payable {
+	function redeemWithFee(
+		bytes memory cctpMsg,
+		bytes memory cctpSigs,
+		bytes memory encodedVm,
+		BridgeWithFeeParams memory bridgeParams
+	) external nonReentrant payable {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 		require(valid, reason);
 
-		validateEmitter(vm.emitterAddress);
+		validateEmitter(vm.emitterAddress, vm.emitterChainId);
 
-		if (truncateAddress(cctpMsg.toBytes32(152)) != address(this)) {
+		if (truncateAddress(cctpMsg.toBytes32(CCTP_RECIPIENT_INDEX)) != address(this)) {
 			revert InvalidMintRecipient();
 		}
 
@@ -418,9 +426,9 @@ contract MayanCircle is ReentrancyGuard {
 	}
 
 	function redeemWithLockedFee(bytes memory cctpMsg, bytes memory cctpSigs, bytes32 unlockerAddr) external nonReentrant payable returns (uint64 sequence) {
-		uint32 cctpSourceDomain = cctpMsg.toUint32(4);
-		uint64 cctpNonce = cctpMsg.toUint64(12);
-		address mintRecipient = truncateAddress(cctpMsg.toBytes32(152));
+		uint32 cctpSourceDomain = cctpMsg.toUint32(CCTP_DOMAIN_INDEX);
+		uint64 cctpNonce = cctpMsg.toUint64(CCTP_NONCE_INDEX);
+		address mintRecipient = truncateAddress(cctpMsg.toBytes32(CCTP_RECIPIENT_INDEX));
 		if (mintRecipient == address(this)) {
 			revert InvalidMintRecipient();
 		}
@@ -483,7 +491,7 @@ contract MayanCircle is ReentrancyGuard {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 		require(valid, reason);
 
-		validateEmitter(vm.emitterAddress);
+		validateEmitter(vm.emitterAddress, vm.emitterChainId);
 
 		unlockMsg.action = uint8(Action.UNLOCK_FEE);
 		bytes32 calculatedPayload = keccak256(encodeUnlockFeeMsg(unlockMsg));
@@ -514,7 +522,7 @@ contract MayanCircle is ReentrancyGuard {
 		(IWormhole.VM memory vm1, bool valid1, string memory reason1) = wormhole.parseAndVerifyVM(encodedVm1);
 		require(valid1, reason1);
 
-		validateEmitter(vm1.emitterAddress);
+		validateEmitter(vm1.emitterAddress, vm1.emitterChainId);
 
 		unlockMsg.action = uint8(Action.UNLOCK_FEE);
 		bytes32 calculatedPayload1 = keccak256(encodeUnlockFeeMsg(unlockMsg));
@@ -532,7 +540,7 @@ contract MayanCircle is ReentrancyGuard {
 		(IWormhole.VM memory vm2, bool valid2, string memory reason2) = wormhole.parseAndVerifyVM(encodedVm2);
 		require(valid2, reason2);
 
-		validateEmitter(vm2.emitterAddress);
+		validateEmitter(vm2.emitterAddress, vm2.emitterChainId);
 
 		refinedMsg.action = uint8(Action.UNLOCK_FEE_REFINE);
 		bytes32 calculatedPayload2 = keccak256(encodeUnlockRefinedFeeMsg(refinedMsg));
@@ -569,11 +577,17 @@ contract MayanCircle is ReentrancyGuard {
 		require(valid, reason);
 
 		require(vm.emitterChainId == SOLANA_CHAIN_ID, 'invalid emitter chain');
-		require(vm.emitterAddress == auctionAddr, 'invalid solana emitter');
+		if (vm.emitterAddress != auctionAddr) {
+			revert InvalidEmitter();
+		}
 
 		FulfillMsg memory fulfillMsg = recreateFulfillMsg(params, cctpMsg);
-		require(fulfillMsg.deadline >= block.timestamp, 'deadline passed');
-		require(msg.sender == truncateAddress(fulfillMsg.driver), 'invalid driver');
+		if (fulfillMsg.deadline < block.timestamp) {
+			revert DeadlineViolation();
+		}
+		if (msg.sender != truncateAddress(fulfillMsg.driver)) {
+			revert Unauthorized();
+		}
 		
 		bytes32 calculatedPayload = keccak256(encodeFulfillMsg(fulfillMsg).concat(abi.encodePacked(fulfillMsg.driver)));
 		if (vm.payload.length != 32 || calculatedPayload != vm.payload.toBytes32(0)) {
@@ -634,7 +648,7 @@ contract MayanCircle is ReentrancyGuard {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 		require(valid, reason);
 
-		validateEmitter(vm.emitterAddress);
+		validateEmitter(vm.emitterAddress, vm.emitterChainId);
 
 		(address localToken, uint256 amount) = receiveCctp(cctpMsg, cctpSigs);
 
@@ -651,7 +665,9 @@ contract MayanCircle is ReentrancyGuard {
 			revert InvalidPayload();
 		}
 
-		require(order.deadline < block.timestamp, 'deadline not passed');
+		if (order.deadline >= block.timestamp) {
+			revert DeadlineViolation();
+		}
 
 		uint256 gasDrop = deNormalizeAmount(order.gasDrop, ETH_DECIMALS);
 		if (msg.value != gasDrop) {
@@ -683,16 +699,24 @@ contract MayanCircle is ReentrancyGuard {
 		return (localToken, amount);
 	}
 
-	function getMintRecipient(uint32 destDomain, address tokenIn) internal view returns (bytes32 mintRecepient) {
-		mintRecepient = keyToMintRecipient[keccak256(abi.encodePacked(destDomain, tokenIn))];
-		if (mintRecepient == bytes32(0)) {
-			revert MintRecepientNotSet();
+	function getMintRecipient(uint32 destDomain, address tokenIn) internal view returns (bytes32) {
+		bytes32 mintRecepient = keyToMintRecipient[keccak256(abi.encodePacked(destDomain, tokenIn))];
+		if (mintRecepient != bytes32(0)) {
+			return mintRecepient;
+		} else if (destDomain == SOLANA_DOMAIN || destDomain == SUI_DOMAIN) {
+			revert MintRecipientNotSet();
+		} else {
+			return bytes32(uint256(uint160(address(this))));
 		}
 	}
 	function getCaller(uint32 destDomain) internal view returns (bytes32 caller) {
 		caller = domainToCaller[destDomain];
-		if (caller == bytes32(0)) {
+		if (caller != bytes32(0)) {
+			return caller;
+		} else if (destDomain == SOLANA_DOMAIN || destDomain == SUI_DOMAIN) {
 			revert CallerNotSet();
+		} else {
+			return bytes32(uint256(uint160(address(this))));
 		}
 	}
 
@@ -911,10 +935,8 @@ contract MayanCircle is ReentrancyGuard {
 		});
 	}
 
-	function validateEmitter(bytes32 emitter) view internal {
-		if (emitter != solanaEmitter
-			&& emitter != suiEmitter
-		 	&& truncateAddress(emitter) != address(this)) {
+	function validateEmitter(bytes32 emitter, uint16 chainId) view internal {
+		if (emitter != chainIdToEmitter[chainId] && truncateAddress(emitter) != address(this)) {
 			revert InvalidEmitter();
 		}
 	}
@@ -1008,6 +1030,12 @@ contract MayanCircle is ReentrancyGuard {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
+		if (caller == bytes32(0)) {
+			revert InvalidCaller();
+		}
+		if (domainToCaller[domain] != bytes32(0)) {
+			revert CallerAlreadySet();
+		}
 		domainToCaller[domain] = caller;
 	}
 
@@ -1015,7 +1043,27 @@ contract MayanCircle is ReentrancyGuard {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
-		keyToMintRecipient[keccak256(abi.encodePacked(destDomain, tokenIn))] = mintRecipient;
+		if (mintRecipient == bytes32(0)) {
+			revert InvalidMintRecipient();
+		}
+		bytes32 key = keccak256(abi.encodePacked(destDomain, tokenIn));
+		if (keyToMintRecipient[key] != bytes32(0)) {
+			revert MintRecipientAlreadySet();
+		}
+		keyToMintRecipient[key] = mintRecipient;
+	}
+
+	function setEmitter(uint16 chainId, bytes32 emitter) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		if (emitter == bytes32(0)) {
+			revert InvalidEmitter();
+		}
+		if (chainIdToEmitter[chainId] != bytes32(0)) {
+			revert EmitterAlreadySet();
+		}
+		chainIdToEmitter[chainId] = emitter;
 	}
 
 	function changeGuardian(address newGuardian) public {
