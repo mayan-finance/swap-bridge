@@ -71,6 +71,11 @@ contract MayanCircle is ReentrancyGuard {
 	error InvalidCaller();
 	error CallerAlreadySet();
 	error DeadlineViolation();
+	error InvalidAddress();
+	error InvalidReferrerFee();
+	error InvalidProtocolFee();
+	error EthTransferFailed();
+	error InvalidAmountOut();
 
 	enum Action {
 		NONE,
@@ -188,6 +193,8 @@ contract MayanCircle is ReentrancyGuard {
 	struct FulfillMsg {
 		uint8 action;
 		uint8 payloadType;
+		bytes32 tokenIn;
+		uint64 amountIn;
 		bytes32 destAddr;
 		uint16 destChainId;
 		bytes32 tokenOut;
@@ -253,16 +260,8 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-
 		maxApproveIfNeeded(tokenIn, address(cctpTokenMessenger), amountIn);
-
-		uint64 ccptNonce = cctpTokenMessenger.depositForBurnWithCaller(
-			amountIn,
-			destDomain,
-			getMintRecipient(destDomain, tokenIn),
-			tokenIn,
-			getCaller(destDomain)
-		);
+		uint64 cctpNonce = sendCctp(tokenIn, amountIn, destDomain);
 
 		bytes32 customPayloadHash;
 		if (payloadType == 2) {
@@ -272,7 +271,7 @@ contract MayanCircle is ReentrancyGuard {
 		BridgeWithFeeMsg memory	bridgeMsg = BridgeWithFeeMsg({
 			action: uint8(Action.BRIDGE_WITH_FEE),
 			payloadType: payloadType,
-			cctpNonce: ccptNonce,
+			cctpNonce: cctpNonce,
 			cctpDomain: localDomain,
 			destAddr: destAddr,
 			gasDrop: gasDrop,
@@ -303,12 +302,13 @@ contract MayanCircle is ReentrancyGuard {
 		if (destDomain == SOLANA_DOMAIN || destDomain == SUI_DOMAIN) {
 			revert InvalidDomain();
 		}
-		require(redeemFee > 0, 'zero redeem fee');
+		if (redeemFee == 0) {
+			revert InvalidRedeemFee();
+		}
 
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-
 		maxApproveIfNeeded(tokenIn, address(cctpTokenMessenger), amountIn - redeemFee);
-		cctpNonce = cctpTokenMessenger.depositForBurnWithCaller(amountIn - redeemFee, destDomain, destAddr, tokenIn, getCaller(destDomain));
+		cctpNonce = sendCctp(tokenIn, amountIn, destDomain);
 
 		feeStorage[cctpNonce] = FeeLock({
 			destAddr: destAddr,
@@ -321,7 +321,7 @@ contract MayanCircle is ReentrancyGuard {
 	function createOrder(
 		OrderParams memory params,
 		uint32 destDomain
-	) external payable nonReentrant {
+	) external payable nonReentrant returns (uint64 sequence) {
 		if (paused) {
 			revert Paused();
 		}
@@ -334,13 +334,15 @@ contract MayanCircle is ReentrancyGuard {
 
 		IERC20(params.tokenIn).safeTransferFrom(msg.sender, address(this), params.amountIn);
 		maxApproveIfNeeded(params.tokenIn, address(cctpTokenMessenger), params.amountIn);
+		uint64 cctpNonce = sendCctp(params.tokenIn, params.amountIn, destDomain);
 
-		bytes32 cctpRecipient = getMintRecipient(destDomain, params.tokenIn);
-		uint64 ccptNonce = cctpTokenMessenger.depositForBurnWithCaller(params.amountIn, destDomain, cctpRecipient, params.tokenIn, getCaller(destDomain));
-
-		require(params.referrerBps <= 50, 'invalid referrer bps');
+		if (params.referrerBps > 100) {
+			revert InvalidReferrerFee();
+		}
 		uint8 protocolBps = feeManager.calcProtocolBps(uint64(params.amountIn), params.tokenIn, params.tokenOut, params.destChain, params.referrerBps);
-		require(protocolBps <= 50, 'invalid protocol bps');
+		if (protocolBps > 100) {
+			revert InvalidProtocolFee();
+		}
 
 		Order memory order = Order({
 			action: uint8(Action.SWAP),
@@ -364,14 +366,14 @@ contract MayanCircle is ReentrancyGuard {
 		OrderFields memory orderFields = OrderFields({
 			referrerBps: params.referrerBps,
 			protocolBps: protocolBps,
-			cctpSourceNonce: ccptNonce,
+			cctpSourceNonce: cctpNonce,
 			cctpSourceDomain: cctpTokenMessenger.localMessageTransmitter().localDomain()
 		});
 
 		encodedOrder = encodedOrder.concat(encodeOrderFields(orderFields));
 		bytes memory payload = abi.encodePacked(keccak256(encodedOrder));
 
-		wormhole.publishMessage{
+		sequence = wormhole.publishMessage{
 			value : msg.value
 		}(0, payload, consistencyLevel);
 	}
@@ -392,10 +394,6 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		BridgeWithFeeMsg memory bridgeMsg = recreateBridgeWithFee(bridgeParams, cctpMsg);
-
-		if (vm.payload.length != 32) {
-			revert InvalidPayload();
-		}
 
 		bytes32 calculatedPayload = keccak256(encodeBridgeWithFee(bridgeMsg));
 		if (vm.payload.length != 32 || calculatedPayload != vm.payload.toBytes32(0)) {
@@ -504,7 +502,9 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		FeeLock memory feeLock = feeStorage[unlockMsg.cctpNonce];
-		require(feeLock.redeemFee > 0, 'fee not locked');
+		if (feeLock.redeemFee == 0) {
+			revert InvalidOrder();
+		}
 
 		if (unlockMsg.gasDrop < feeLock.gasDrop) {
 			revert InvalidGasDrop();
@@ -534,8 +534,12 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		FeeLock memory feeLock = feeStorage[unlockMsg.cctpNonce];
-		require(feeLock.redeemFee > 0, 'fee not locked');
-		require(unlockMsg.gasDrop < feeLock.gasDrop, 'gas was sufficient');
+		if (feeLock.redeemFee == 0) {
+			revert InvalidOrder();
+		}
+		if (unlockMsg.gasDrop >= feeLock.gasDrop) {
+			revert InvalidAction();
+		}
 
 		(IWormhole.VM memory vm2, bool valid2, string memory reason2) = wormhole.parseAndVerifyVM(encodedVm2);
 		require(valid2, reason2);
@@ -576,8 +580,7 @@ contract MayanCircle is ReentrancyGuard {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 		require(valid, reason);
 
-		require(vm.emitterChainId == SOLANA_CHAIN_ID, 'invalid emitter chain');
-		if (vm.emitterAddress != auctionAddr) {
+		if (vm.emitterChainId != SOLANA_CHAIN_ID || vm.emitterAddress != auctionAddr) {
 			revert InvalidEmitter();
 		}
 
@@ -589,7 +592,7 @@ contract MayanCircle is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		
-		bytes32 calculatedPayload = keccak256(encodeFulfillMsg(fulfillMsg).concat(abi.encodePacked(fulfillMsg.driver)));
+		bytes32 calculatedPayload = calcFulfillPayload(fulfillMsg);
 		if (vm.payload.length != 32 || calculatedPayload != vm.payload.toBytes32(0)) {
 			revert InvalidPayload();
 		}
@@ -627,7 +630,9 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		uint256 promisedAmount = deNormalizeAmount(fulfillMsg.promisedAmount, decimals);
-		require(amountOut >= promisedAmount, 'insufficient amount out');
+		if (amountOut < promisedAmount) {
+			revert InvalidAmountOut();
+		}
 
 		makePayments(
 			fulfillMsg,
@@ -683,6 +688,24 @@ contract MayanCircle is ReentrancyGuard {
 		IERC20(localToken).safeTransfer(destAddr, amount - order.redeemFee);
 
 		logRefund(cctpMsg, amount);
+	}
+
+	function sendCctp(
+		address tokenIn,
+		uint256 amountIn,
+		uint32 destDomain
+	) internal returns (uint64 cctpNonce) {
+		if (destDomain == SUI_DOMAIN) {
+			cctpNonce = cctpTokenMessenger.depositForBurn(amountIn, destDomain, getMintRecipient(destDomain, tokenIn), tokenIn);
+		} else {
+			cctpNonce = cctpTokenMessenger.depositForBurnWithCaller(
+				amountIn,
+				destDomain,
+				getMintRecipient(destDomain, tokenIn),
+				tokenIn,
+				getCaller(destDomain)
+			);
+		}
 	}
 
 	function receiveCctp(bytes memory cctpMsg, bytes memory cctpSigs) internal returns (address, uint256) {
@@ -870,6 +893,12 @@ contract MayanCircle is ReentrancyGuard {
 		);
 	}
 
+	function calcFulfillPayload(FulfillMsg memory fulfillMsg) internal pure returns (bytes32) {
+		bytes memory partialPayload = encodeFulfillMsg(fulfillMsg);
+		bytes memory completePayload = partialPayload.concat(abi.encodePacked(fulfillMsg.cctpSourceNonce, fulfillMsg.cctpSourceDomain, fulfillMsg.driver));
+		return keccak256(completePayload);
+	}
+
 	function recreateOrder(
 		OrderParams memory params,
 		bytes memory cctpMsg,
@@ -897,6 +926,8 @@ contract MayanCircle is ReentrancyGuard {
 		return abi.encodePacked(
 			fulfillMsg.action,
 			fulfillMsg.payloadType,
+			fulfillMsg.tokenIn,
+			fulfillMsg.amountIn,
 			fulfillMsg.destAddr,
 			fulfillMsg.destChainId,
 			fulfillMsg.tokenOut,
@@ -906,9 +937,7 @@ contract MayanCircle is ReentrancyGuard {
 			fulfillMsg.deadline,
 			fulfillMsg.referrerAddr,
 			fulfillMsg.referrerBps,
-			fulfillMsg.protocolBps,
-			fulfillMsg.cctpSourceNonce,
-			fulfillMsg.cctpSourceDomain
+			fulfillMsg.protocolBps
 		);
 	}
 
@@ -919,6 +948,8 @@ contract MayanCircle is ReentrancyGuard {
 		return FulfillMsg({
 			action: uint8(Action.FULFILL),
 			payloadType: 1,
+			tokenIn: cctpMsg.toBytes32(CCTP_TOKEN_INDEX),
+			amountIn: cctpMsg.toUint64(CCTP_AMOUNT_INDEX),
 			destAddr: params.destAddr,
 			destChainId: params.destChainId,
 			tokenOut: params.tokenOut,
@@ -954,7 +985,9 @@ contract MayanCircle is ReentrancyGuard {
 	function payEth(address to, uint256 amount, bool revertOnFailure) internal {
 		(bool success, ) = payable(to).call{value: amount}('');
 		if (revertOnFailure) {
-			require(success, 'payment failed');
+			if (success != true) {
+				revert EthTransferFailed();
+			}
 		}
 	}
 
@@ -982,7 +1015,9 @@ contract MayanCircle is ReentrancyGuard {
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
-		require(bytes12(b) == 0, 'invalid EVM address');
+		if (bytes12(b) != 0) {
+			revert InvalidAddress();
+		}
 		return address(uint160(uint256(b)));
 	}
 
@@ -1022,7 +1057,6 @@ contract MayanCircle is ReentrancyGuard {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
-		require(to != address(0), 'transfer to the zero address');
 		payEth(to, amount, true);
 	}
 
