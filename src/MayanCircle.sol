@@ -46,7 +46,7 @@ contract MayanCircle is ReentrancyGuard {
 	uint256 constant CCTP_NONCE_INDEX = 12;
 	uint256 constant CCTP_TOKEN_INDEX = 120;
 	uint256 constant CCTP_RECIPIENT_INDEX = 152;
-	uint256 constant CCTP_AMOUNT_INDEX = 184;
+	uint256 constant CCTP_AMOUNT_INDEX = 208;
 
 	event OrderFulfilled(uint32 sourceDomain, uint64 sourceNonce, uint256 amount);
 	event OrderRefunded(uint32 sourceDomain, uint64 sourceNonce, uint256 amount);
@@ -417,7 +417,11 @@ contract MayanCircle is ReentrancyGuard {
 		}
 		amount = IERC20(localToken).balanceOf(address(this)) - amount;
 
-		IERC20(localToken).safeTransfer(msg.sender, uint256(bridgeMsg.redeemFee));
+		if (bridgeMsg.redeemFee > amount) {
+			revert InvalidRedeemFee();
+		}
+		maxApproveIfNeeded(localToken, address(feeManager), bridgeMsg.redeemFee);
+		feeManager.depositRelayerFee(msg.sender, localToken, bridgeMsg.redeemFee);
 		address recipient = truncateAddress(bridgeMsg.destAddr);
 		IERC20(localToken).safeTransfer(recipient, amount - uint256(bridgeMsg.redeemFee));
 		payEth(recipient, denormalizedGasDrop, false);
@@ -813,7 +817,7 @@ contract MayanCircle is ReentrancyGuard {
 			destAddr: bridgeParams.destAddr,
 			gasDrop: bridgeParams.gasDrop,
 			redeemFee: bridgeParams.redeemFee,
-			burnAmount: uint64(cctpMsg.toUint256(CCTP_AMOUNT_INDEX)),
+			burnAmount: cctpMsg.toUint64(CCTP_AMOUNT_INDEX),
 			burnToken: cctpMsg.toBytes32(CCTP_TOKEN_INDEX),
 			customPayload: bridgeParams.customPayload
 		});
@@ -910,7 +914,7 @@ contract MayanCircle is ReentrancyGuard {
 			trader: extraParams.trader,
 			sourceChain: extraParams.sourceChainId,
 			tokenIn: cctpMsg.toBytes32(CCTP_TOKEN_INDEX),
-			amountIn: uint64(cctpMsg.toUint256(CCTP_AMOUNT_INDEX)),
+			amountIn: cctpMsg.toUint64(CCTP_AMOUNT_INDEX),
 			destAddr: params.destAddr,
 			destChain: params.destChain,
 			tokenOut: params.tokenOut,

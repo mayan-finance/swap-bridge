@@ -11,11 +11,14 @@ contract FeeManager is IFeeManager {
 
 	address public operator;
 	address public nextOperator;
+	address public collector;
 	uint8 public baseBps;
-	address public treasury;
 
-	constructor(address _operator, uint8 _baseBps) {
+	mapping (bytes32 => uint256) public relayerFees;
+
+	constructor(address _operator, address _collector, uint8 _baseBps) {
 		operator = _operator;
+		collector = _collector;
 		baseBps = _baseBps;
 	}
 	
@@ -25,20 +28,46 @@ contract FeeManager is IFeeManager {
 		bytes32 tokenOut,
 		uint16 destChain,
 		uint8 referrerBps
-	) external view override returns (uint8) {
-		if (referrerBps > baseBps) {
-			return referrerBps;
+	) external override returns (uint8) {
+		emit ProtocolFeeCalced(baseBps);
+		return baseBps;
+	}
+
+	function depositRelayerFee(address relayer, address token, uint256 amount) payable external override {
+		if (token == address(0)) {
+			require(msg.value == amount, 'invalid amount');
 		} else {
-			return baseBps;
+			IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 		}
+		bytes32 key = keccak256(abi.encodePacked(relayer, token));
+		relayerFees[key] += amount;
+		emit FeeDeposited(relayer, token, amount);
+	}
+
+	function withdrawRelayerFee(address token, uint256 amount) external override {
+		bytes32 key = keccak256(abi.encodePacked(msg.sender, token));
+		require(relayerFees[key] >= amount, 'insufficient balance');
+		relayerFees[key] -= amount;
+		if (token == address(0)) {
+			payable(msg.sender).transfer(amount);
+		} else {
+			IERC20(token).safeTransfer(msg.sender, amount);
+		}
+		emit FeeWithdrawn(token, amount);
 	}
 
 	function feeCollector() external view override returns (address) {
-		if (treasury != address(0)) {
-			return treasury;
-		} else {
-			return address(this);
-		}
+		return collector;
+	}
+
+	function setFeeCollector(address _collector) external {
+		require(msg.sender == operator, 'only operator');
+		collector = _collector;
+	}
+
+	function getRelayerFee(address relayer, address token) external view returns (uint256) {
+		bytes32 key = keccak256(abi.encodePacked(relayer, token));
+		return relayerFees[key];
 	}
 
 	function changeOperator(address _nextOperator) external {
@@ -51,25 +80,9 @@ contract FeeManager is IFeeManager {
 		operator = nextOperator;
 	}
 
-	function sweepToken(address token, uint256 amount, address to) public {
-		require(msg.sender == operator, 'only operator');
-		IERC20(token).safeTransfer(to, amount);
-	}
-
-	function sweepEth(uint256 amount, address payable to) public {
-		require(msg.sender == operator, 'only operator');
-		require(to != address(0), 'transfer to the zero address');
-		to.transfer(amount);
-	}
-
 	function setBaseBps(uint8 _baseBps) external {
 		require(msg.sender == operator, 'only operator');
 		baseBps = _baseBps;
-	}
-
-	function setTreasury(address _treasury) external {
-		require(msg.sender == operator, 'only operator');
-		treasury = _treasury;
 	}
 
 	receive() external payable {}
