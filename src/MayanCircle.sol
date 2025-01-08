@@ -34,6 +34,7 @@ contract MayanCircle is ReentrancyGuard {
 	mapping(uint16 => bytes32) public chainIdToEmitter;
 	mapping(uint32 => bytes32) public domainToCaller;
 	mapping(bytes32 => bytes32) public keyToMintRecipient; // key is domain + local token address
+	mapping(uint16 => uint32) private chainIdToDomain;
 
 	uint8 constant ETH_DECIMALS = 18;
 
@@ -76,6 +77,8 @@ contract MayanCircle is ReentrancyGuard {
 	error InvalidProtocolFee();
 	error EthTransferFailed();
 	error InvalidAmountOut();
+	error DomainNotSet();
+	error DomainAlreadySet();
 
 	enum Action {
 		NONE,
@@ -319,8 +322,7 @@ contract MayanCircle is ReentrancyGuard {
 	}
 
 	function createOrder(
-		OrderParams memory params,
-		uint32 destDomain
+		OrderParams memory params
 	) external payable nonReentrant returns (uint64 sequence) {
 		if (paused) {
 			revert Paused();
@@ -334,7 +336,7 @@ contract MayanCircle is ReentrancyGuard {
 
 		IERC20(params.tokenIn).safeTransferFrom(msg.sender, address(this), params.amountIn);
 		maxApproveIfNeeded(params.tokenIn, address(cctpTokenMessenger), params.amountIn);
-		uint64 cctpNonce = sendCctp(params.tokenIn, params.amountIn, destDomain);
+		uint64 cctpNonce = sendCctp(params.tokenIn, params.amountIn, getDomain(params.destChain));
 
 		if (params.referrerBps > 100) {
 			revert InvalidReferrerFee();
@@ -1102,6 +1104,24 @@ contract MayanCircle is ReentrancyGuard {
 			revert EmitterAlreadySet();
 		}
 		chainIdToEmitter[chainId] = emitter;
+	}
+
+	function setDomain(uint16 chainId, uint32 domain) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		if (chainIdToDomain[chainId] != 0) {
+			revert DomainAlreadySet();
+		}
+		chainIdToDomain[chainId] = domain + 1; // to distinguish between unset and 0
+	}
+
+	function getDomain(uint16 chainId) public view returns (uint32 domain) {
+		domain = chainIdToDomain[chainId];
+		if (domain == 0) {
+			revert DomainNotSet();
+		}
+		return domain - 1;
 	}
 
 	function changeGuardian(address newGuardian) public {
