@@ -5,10 +5,12 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "./interfaces/IWormhole.sol";
-import "./interfaces/IFeeManager.sol";
-import "./libs/BytesLib.sol";
-import "./libs/SignatureVerifier.sol";
+import "../interfaces/IWormhole.sol";
+import "../interfaces/IFeeManager.sol";
+import "../libs/BytesLib.sol";
+import "../libs/SignatureVerifier.sol";
+import "./SwiftStructs.sol";
+import "./SwiftErrors.sol";
 
 contract SwiftDest is ReentrancyGuard {
 	event OrderCreated(bytes32 key);
@@ -21,8 +23,6 @@ contract SwiftDest is ReentrancyGuard {
 	using BytesLib for bytes;
 	using SignatureVerifier for bytes;
 
-	uint16 constant SOLANA_CHAIN_ID = 1;
-	uint8 constant BPS_FEE_LIMIT = 50;
 	uint8 constant NATIVE_DECIMALS = 18;
 
 	IWormhole public immutable wormhole;
@@ -41,164 +41,6 @@ contract SwiftDest is ReentrancyGuard {
 	mapping(bytes32 => bytes) public unlockMsgs;
 	mapping(bytes32 => uint256) public pendingAmounts;
 
-
-	error Paused();
-	error Unauthorized();
-	error InvalidAction();
-	error InvalidBpsFee();
-	error InvalidOrderStatus();
-	error InvalidOrderHash();
-	error InvalidEmitterChain();
-	error InvalidEmitterAddress();
-	error InvalidSrcChain();
-	error OrderNotExists(bytes32 orderHash);
-	error SmallAmountIn();
-	error FeesTooHigh();
-	error InvalidGasDrop();
-	error InvalidDestChain();
-	error DuplicateOrder();
-	error InsufficientAmount();
-	error InvalidAmount();
-	error DeadlineViolation();
-	error InvalidWormholeFee();
-	error InvalidAuctionMode();
-	error InvalidEvmAddr();
-
-	struct Order {
-		Status status;
-		uint64 amountIn;
-		uint16 destChainId;
-	}
-
-	struct OrderParams {
-		uint8 payloadType;
-		bytes32 trader;
-		bytes32 destAddr;
-		uint16 destChainId;
-		bytes32 referrerAddr;		
-		bytes32 tokenOut;
-		uint64 minAmountOut;
-		uint64 gasDrop;
-		uint64 cancelFee;
-		uint64 refundFee;
-		uint64 deadline;
-		uint16 penaltyPeriod;
-		uint8 referrerBps;
-		uint8 auctionMode;
-		uint64 baseBond;
-		uint64 perBpsBond;
-		bytes32 random;
-	}
-
-	struct ExtraParams {
-		uint16 srcChainId;
-		bytes32 tokenIn;
-		uint8 protocolBps;
-		bytes32 customPayloadHash;
-	}	
-
-	struct PermitParams {
-		uint256 value;
-		uint256 deadline;
-		uint8 v;
-		bytes32 r;
-		bytes32 s;
-	}
-
-	struct Key {
-		uint8 payloadType;
-		bytes32 trader;
-		uint16 srcChainId;
-		bytes32 tokenIn;
-		bytes32 destAddr;
-		uint16 destChainId;
-		bytes32 tokenOut;
-		uint64 minAmountOut;
-		uint64 gasDrop;
-		uint64 cancelFee;
-		uint64 refundFee;
-		uint64 deadline;
-		uint64 penaltyPeriod;
-		bytes32 referrerAddr;
-		uint8 referrerBps;
-		uint8 protocolBps;
-		uint8 auctionMode;
-		uint64 baseBond;
-		uint64 perBpsBond;
-		bytes32 random;
-		bytes32 customPayloadHash;
-	}
-
-	struct PaymentParams {
-		uint8 payloadType;
-		bytes32 orderHash;
-		uint64 promisedAmount;
-		uint64 minAmountOut;
-		address destAddr;
-		address tokenOut;
-		uint64 gasDrop;
-		bool batch;
-	}
-
-	enum Status {
-		CREATED,
-		FULFILLED,
-		SETTLED,
-		UNLOCKED,
-		CANCELED,
-		REFUNDED
-	}
-
-	enum Action {
-		NONE,
-		FULFILL,
-		UNLOCK,
-		REFUND,
-		BATCH_UNLOCK,
-		COMPRESSED_UNLOCK
-	}
-
-	enum AuctionMode {
-		NONE,
-		BYPASS,
-		ENGLISH
-	}
-
-	struct UnlockMsg {
-		uint8 action;
-		bytes32 orderHash;
-		uint16 srcChainId;
-		bytes32 tokenIn;
-		bytes32	referrerAddr;
-		uint8 referrerBps;
-		uint8 protocolBps;		
-		bytes32 recipient;
-		uint64 fulfillTime;
-	}
-
-	struct RefundMsg {
-		uint8 action;
-		bytes32 orderHash;
-		uint16 srcChainId;
-		bytes32 tokenIn;
-		bytes32 recipient;
-		bytes32 canceler;
-		uint64 cancelFee;
-		uint64 refundFee;	
-	}
-
-	struct FulfillMsg {
-		uint8 action;
-		bytes32 orderHash;
-		bytes32 driver;
-		uint64 promisedAmount;
-	}
-
-	struct TransferParams {
-		address from;
-		uint256 validAfter;
-		uint256 validBefore;
-	}
 
 	constructor(
 		address _wormhole,
@@ -289,7 +131,7 @@ contract SwiftDest is ReentrancyGuard {
 		} else {
 			sequence = wormhole.publishMessage{
 				value : wormhole.messageFee()
-			}(0, encodedUnlockMsg, consistencyLevel);
+			}(0, abi.encodePacked(Action.UNLOCK, encodedUnlockMsg), consistencyLevel);
 		}
 
 		emit OrderFulfilled(fulfillMsg.orderHash, sequence, fulfillAmount);
@@ -348,7 +190,7 @@ contract SwiftDest is ReentrancyGuard {
 		} else {
 			sequence = wormhole.publishMessage{
 				value : wormhole.messageFee()
-			}(0, uncodedUnlockMsg, consistencyLevel);
+			}(0, abi.encodePacked(Action.UNLOCK, uncodedUnlockMsg), consistencyLevel);
 		}
 
 		emit OrderFulfilled(orderHash, sequence, fulfillAmount);
@@ -402,10 +244,11 @@ contract SwiftDest is ReentrancyGuard {
 		bytes memory encoded;
 		for(uint i=0; i<orderHashes.length; i++) {
 			bytes memory unlockMsg = unlockMsgs[orderHashes[i]];
-			if (unlockMsg.length == 0) {
+			if (unlockMsg.length == UNLOCK_MSG_SIZE) {
 				revert OrderNotExists(orderHashes[i]);
 			}
-			encoded = abi.encodePacked(encoded, unlockMsg);
+			encoded = abi.encodePacked(encoded);
+			delete unlockMsgs[orderHashes[i]];
 		}
 
 		bytes memory payload;
@@ -518,6 +361,7 @@ contract SwiftDest is ReentrancyGuard {
 			referrerBps: params.referrerBps,
 			protocolBps: extraParams.protocolBps,
 			recipient: recipient,
+			driver: bytes32(uint256(uint160(tx.origin))),
 			fulfillTime: uint64(block.timestamp)
 		});
 	}
@@ -571,61 +415,6 @@ contract SwiftDest is ReentrancyGuard {
 		index += 8;
 	}
 
-	function parseUnlockPayload(bytes memory encoded) public pure returns (UnlockMsg memory unlockMsg) {
-		uint index = 0;
-
-		unlockMsg.action = encoded.toUint8(index);
-		index += 1;
-
-		if (unlockMsg.action != uint8(Action.UNLOCK)) {
-			revert InvalidAction();
-		}
-
-		unlockMsg.orderHash = encoded.toBytes32(index);
-		index += 32;
-
-		unlockMsg.srcChainId = encoded.toUint16(index);
-		index += 2;
-
-		unlockMsg.tokenIn = encoded.toBytes32(index);
-		index += 32;
-
-		unlockMsg.recipient = encoded.toBytes32(index);
-		index += 32;
-	}
-
-	function parseRefundPayload(bytes memory encoded) public pure returns (RefundMsg memory refundMsg) {
-		uint index = 0;
-
-		refundMsg.action = encoded.toUint8(index);
-		index += 1;
-
-		if (refundMsg.action != uint8(Action.REFUND)) {
-			revert InvalidAction();
-		}
-
-		refundMsg.orderHash = encoded.toBytes32(index);
-		index += 32;
-
-		refundMsg.srcChainId = encoded.toUint16(index);
-		index += 2;
-
-		refundMsg.tokenIn = encoded.toBytes32(index);
-		index += 32;
-
-		refundMsg.recipient = encoded.toBytes32(index);
-		index += 32;
-
-		refundMsg.canceler = encoded.toBytes32(index);
-		index += 32;
-
-		refundMsg.cancelFee = encoded.toUint64(index);
-		index += 8;
-
-		refundMsg.refundFee = encoded.toUint64(index);
-		index += 8;
-	}
-
 	function encodeKey(Key memory key) internal pure returns (bytes memory encoded) {
 		encoded = abi.encodePacked(
 			key.payloadType,
@@ -656,11 +445,16 @@ contract SwiftDest is ReentrancyGuard {
 
 	function encodeUnlockMsg(UnlockMsg memory unlockMsg) internal pure returns (bytes memory encoded) {
 		encoded = abi.encodePacked(
-			unlockMsg.action,
+			//unlockMsg.action,
 			unlockMsg.orderHash,
 			unlockMsg.srcChainId,
 			unlockMsg.tokenIn,
-			unlockMsg.recipient
+			unlockMsg.referrerAddr,
+			unlockMsg.referrerBps,
+			unlockMsg.protocolBps,
+			unlockMsg.recipient,
+			unlockMsg.driver,
+			unlockMsg.fulfillTime
 		);
 	}
 
