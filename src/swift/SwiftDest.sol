@@ -26,28 +26,23 @@ contract SwiftDest is ReentrancyGuard {
 	uint8 constant NATIVE_DECIMALS = 18;
 
 	IWormhole public immutable wormhole;
-	uint16 public immutable auctionChainId;
-	bytes32 public immutable auctionAddr;
-	bytes32 public immutable solanaEmitter;
+	uint16 public auctionChainId;
+	bytes32 public auctionAddr;
 	IFeeManager public feeManager;
 	uint8 public consistencyLevel;
 	address public guardian;
 	address public nextGuardian;
 	bool public paused;
 
-	bytes32 private domainSeparator;
-
 	mapping(bytes32 => Order) public orders;
 	mapping(bytes32 => bytes) public unlockMsgs;
 	mapping(bytes32 => uint256) public pendingAmounts;
-
 
 	constructor(
 		address _wormhole,
 		address _feeManager,
 		uint16 _auctionChainId,
 		bytes32 _auctionAddr,
-		bytes32 _solanaEmitter,
 		uint8 _consistencyLevel
 	) {
 		guardian = msg.sender;
@@ -55,15 +50,7 @@ contract SwiftDest is ReentrancyGuard {
 		feeManager = IFeeManager(_feeManager);
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
-		solanaEmitter = _solanaEmitter;
 		consistencyLevel = _consistencyLevel;
-
-		domainSeparator = keccak256(abi.encode(
-			keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)"),
-			keccak256("Mayan Swift"),
-			uint256(block.chainid),
-			address(this)
-		));
 	}
 
 	function fulfillOrder(
@@ -502,21 +489,6 @@ contract SwiftDest is ReentrancyGuard {
 		return amount;
 	}
 
-	function hashTypedData(bytes32 orderHash, uint256 amountIn, uint256 submissionFee) internal view returns (bytes32) {
-		bytes memory encoded = abi.encode(keccak256("CreateOrder(bytes32 OrderId,uint256 InputAmount,uint256 SubmissionFee)"), orderHash, amountIn, submissionFee);
-		return toTypedDataHash(domainSeparator, keccak256(encoded));
-	}
-
-	function toTypedDataHash(bytes32 _domainSeparator, bytes32 _structHash) internal pure returns (bytes32 digest) {
-		assembly {
-			let ptr := mload(0x40)
-			mstore(ptr, "\x19\x01")
-			mstore(add(ptr, 0x02), _domainSeparator)
-			mstore(add(ptr, 0x22), _structHash)
-			digest := keccak256(ptr, 0x42)
-		}
-	}
-
 	function pullTokensFrom(address tokenIn, uint256 amount, address from) internal returns (uint256) {
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
 		IERC20(tokenIn).safeTransferFrom(from, address(this), amount);
@@ -545,6 +517,17 @@ contract SwiftDest is ReentrancyGuard {
 		}
 		paused = _pause;
 	}
+
+	function setAuctionConfig(uint16 _auctionChainId, bytes32 _auctionAddr) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		if (_auctionChainId == 0 || _auctionAddr == bytes32(0)) {
+			revert InvalidAuctionConfig();
+		}
+		auctionChainId = _auctionChainId;
+		auctionAddr = _auctionAddr;
+	}	
 
 	function setFeeManager(address _feeManager) public {
 		if (msg.sender != guardian) {

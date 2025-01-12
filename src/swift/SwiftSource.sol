@@ -27,9 +27,8 @@ contract SwiftSource is ReentrancyGuard {
 	uint8 constant NATIVE_DECIMALS = 18;
 
 	IWormhole public immutable wormhole;
-	uint16 public immutable auctionChainId;
-	bytes32 public immutable auctionAddr;
-	bytes32 public immutable solanaEmitter;
+	uint16 public auctionChainId;
+	bytes32 public auctionAddr;
 	IFeeManager public feeManager;
 	uint8 public consistencyLevel;
 	address public guardian;
@@ -39,13 +38,13 @@ contract SwiftSource is ReentrancyGuard {
 	bytes32 private domainSeparator;
 
 	mapping(bytes32 => Order) public orders;
+	mapping(uint16 => bytes32) public emitters;
 
 	constructor(
 		address _wormhole,
 		address _feeManager,
 		uint16 _auctionChainId,
 		bytes32 _auctionAddr,
-		bytes32 _solanaEmitter,
 		uint8 _consistencyLevel
 	) {
 		guardian = msg.sender;
@@ -53,7 +52,6 @@ contract SwiftSource is ReentrancyGuard {
 		feeManager = IFeeManager(_feeManager);
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
-		solanaEmitter = _solanaEmitter;
 		consistencyLevel = _consistencyLevel;
 
 		domainSeparator = keccak256(abi.encode(
@@ -301,7 +299,7 @@ contract SwiftSource is ReentrancyGuard {
 		if (vm.emitterChainId != order.destChainId) {
 			revert InvalidEmitterChain();
 		}
-		if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
+		if (truncateAddress(vm.emitterAddress) != address(this) && vm.emitterAddress != emitters[order.destChainId]) {
 			revert InvalidEmitterAddress();
 		}
 
@@ -349,14 +347,14 @@ contract SwiftSource is ReentrancyGuard {
 		if (vm.emitterChainId != order.destChainId) {
 			revert InvalidEmitterChain();
 		}
-		if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
+		if (truncateAddress(vm.emitterAddress) != address(this) && vm.emitterAddress != emitters[order.destChainId]) {
 			revert InvalidEmitterAddress();
 		}
 
 		unlockOrder(unlockMsg, order);
 	}
 
-	function unlockBatch(bytes memory encodedVm) nonReentrant public {
+	function unlockBatch(bytes memory encodedVm, uint16[] memory indexes) nonReentrant public {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
@@ -367,10 +365,10 @@ contract SwiftSource is ReentrancyGuard {
 		}
 
 		// skip action (1 byte)
-		processUnlocks(vm.payload, 1, vm.emitterChainId, vm.emitterAddress);
+		processUnlocks(vm.payload, 1, vm.emitterChainId, vm.emitterAddress, indexes);
 	}
 	
-	function unlockCompressedBatch(bytes memory encodedVm, bytes memory encodedPayload) nonReentrant public {
+	function unlockCompressedBatch(bytes memory encodedVm, bytes memory encodedPayload, uint16[] memory indexes) nonReentrant public {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
@@ -387,110 +385,42 @@ contract SwiftSource is ReentrancyGuard {
 		}
 
 		// skip action and hash (33 bytes)
-		processUnlocks(encodedPayload, 33, vm.emitterChainId, vm.emitterAddress);
+		processUnlocks(encodedPayload, 33, vm.emitterChainId, vm.emitterAddress, indexes);
 	}
 
-	function unlockSingleFromBatch(bytes memory encodedVm, uint256 index) nonReentrant public {
-		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+	function processUnlocks(bytes memory payload, uint offset, uint16 emitterChainId, bytes32 emitterAddress, uint16[] memory indexes) internal {
+		uint16 count = payload.toUint16(offset);
+		offset += 2;
 
-		require(valid, reason);
-
-		uint8 action = vm.payload.toUint8(0);
-		if (action != uint8(Action.BATCH_UNLOCK)) {
-			revert InvalidAction();
+		// If indexes array is empty, create a default array to iterate over all indices
+		if (indexes.length == 0) {
+			indexes = new uint16[](count);
+			for (uint16 i = 0; i < count; i++) {
+				indexes[i] = i;
+			}
 		}
 
-		// skip action (1 byte) and count (2 bytes)
-		uint offset = 3 + index * UNLOCK_MSG_SIZE;
-		UnlockMsg memory unlockMsg = UnlockMsg({
-			action: uint8(Action.UNLOCK),
-			orderHash: vm.payload.toBytes32(offset),
-			srcChainId: vm.payload.toUint16(offset + 32),
-			tokenIn: vm.payload.toBytes32(offset + 34),
-			referrerAddr: vm.payload.toBytes32(offset + 66),
-			referrerBps: vm.payload.toUint8(offset + 98),
-			protocolBps: vm.payload.toUint8(offset + 99),
-			recipient: vm.payload.toBytes32(offset + 100),
-			driver: vm.payload.toBytes32(offset + 132),
-			fulfillTime: vm.payload.toUint64(offset + 164)
-		});
-		Order memory order = orders[unlockMsg.orderHash];
+		for (uint i = 0; i < indexes.length; i++) {
+			uint16 index = indexes[i];
+			if (index >= count) {
+				revert InvalidBatchIndex();
+			}
 
-		if (order.destChainId == 0) {
-			revert OrderNotExists(unlockMsg.orderHash);
-		}
-		if (vm.emitterChainId != order.destChainId) {
-			revert InvalidEmitterChain();
-		}
-		if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
-			revert InvalidEmitterAddress();
-		}
+			uint currentOffset = offset + index * UNLOCK_MSG_SIZE;
 
-		unlockOrder(unlockMsg, order);
-	}
-
-	function unlockSingleFromCompressedBatch(bytes memory encodedVm, bytes memory encodedPayload, uint256 index) nonReentrant public {
-		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
-
-		require(valid, reason);
-
-		uint8 action = vm.payload.toUint8(0);
-		if (action != uint8(Action.BATCH_UNLOCK)) {
-			revert InvalidAction();
-		}
-		bytes32 computedHash = keccak256(encodedPayload);
-		bytes32 msgHash = vm.payload.toBytes32(1);
-
-		if (computedHash != msgHash) {
-			revert InvalidPayload();
-		}
-
-		// skip action and hash (33 bytes)
-		uint offset = 33 + index * UNLOCK_MSG_SIZE;
-		UnlockMsg memory unlockMsg = UnlockMsg({
-			action: uint8(Action.UNLOCK),
-			orderHash: encodedPayload.toBytes32(offset),
-			srcChainId: encodedPayload.toUint16(offset + 32),
-			tokenIn: encodedPayload.toBytes32(offset + 34),
-			referrerAddr: encodedPayload.toBytes32(offset + 66),
-			referrerBps: encodedPayload.toUint8(offset + 98),
-			protocolBps: encodedPayload.toUint8(offset + 99),
-			recipient: encodedPayload.toBytes32(offset + 100),
-			driver: encodedPayload.toBytes32(offset + 132),
-			fulfillTime: encodedPayload.toUint64(offset + 164)
-		});
-		Order memory order = orders[unlockMsg.orderHash];
-
-		if (order.destChainId == 0) {
-			revert OrderNotExists(unlockMsg.orderHash);
-		}
-		if (vm.emitterChainId != order.destChainId) {
-			revert InvalidEmitterChain();
-		}
-		if (vm.emitterAddress != solanaEmitter && truncateAddress(vm.emitterAddress) != address(this)) {
-			revert InvalidEmitterAddress();
-		}
-
-		unlockOrder(unlockMsg, order);
-	}
-
-	function processUnlocks(bytes memory payload, uint index, uint16 emitterChainId, bytes32 emitterAddress) internal {
-		uint16 count = payload.toUint16(index);
-		index += 2;
-		for (uint i=0; i<count; i++) {
 			UnlockMsg memory unlockMsg = UnlockMsg({
 				action: uint8(Action.UNLOCK),
-				orderHash: payload.toBytes32(index),
-				srcChainId: payload.toUint16(index + 32),
-				tokenIn: payload.toBytes32(index + 34),
-				referrerAddr: payload.toBytes32(index + 66),
-				referrerBps: payload.toUint8(index + 98),
-				protocolBps: payload.toUint8(index + 99),
-				recipient: payload.toBytes32(index + 100),
-				driver: payload.toBytes32(index + 132),
-				fulfillTime: payload.toUint64(index + 164)
+				orderHash: payload.toBytes32(currentOffset),
+				srcChainId: payload.toUint16(currentOffset + 32),
+				tokenIn: payload.toBytes32(currentOffset + 34),
+				referrerAddr: payload.toBytes32(currentOffset + 66),
+				referrerBps: payload.toUint8(currentOffset + 98),
+				protocolBps: payload.toUint8(currentOffset + 99),
+				recipient: payload.toBytes32(currentOffset + 100),
+				driver: payload.toBytes32(currentOffset + 132),
+				fulfillTime: payload.toUint64(currentOffset + 164)
 			});
-			index += UNLOCK_MSG_SIZE;
+
 			Order memory order = orders[unlockMsg.orderHash];
 			if (order.status != Status.CREATED) {
 				continue;
@@ -498,7 +428,7 @@ contract SwiftSource is ReentrancyGuard {
 			if (emitterChainId != order.destChainId) {
 				revert InvalidEmitterChain();
 			}
-			if (emitterAddress != solanaEmitter && truncateAddress(emitterAddress) != address(this)) {
+			if (truncateAddress(emitterAddress) != address(this) && emitterAddress != emitters[order.destChainId]) {
 				revert InvalidEmitterAddress();
 			}
 
@@ -762,6 +692,19 @@ contract SwiftSource is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		consistencyLevel = _consistencyLevel;
+	}
+
+	function setEmitterAddr(uint16 chainId, bytes32 addr) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		if (addr == bytes32(0)) {
+			revert InvalidEmitterAddress();
+		}
+		if (emitters[chainId] != bytes32(0)) {
+			revert EmitterAddressExists();
+		}
+		emitters[chainId] = addr;
 	}
 
 	function changeGuardian(address newGuardian) public {
