@@ -41,7 +41,7 @@ contract FulfillHelper {
 		bytes calldata mayanData,
 		PermitParams calldata permitParams
 	) external payable {
-		if (mayanProtocols[mayanProtocol]) {
+		if (!mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
 		}
 		pullTokenIn(tokenIn, amountIn, permitParams);
@@ -88,6 +88,7 @@ contract FulfillHelper {
 		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
 		}
+		uint256 amountBefore = IERC20(tokenIn).balanceOf(address(this));
 		pullTokenIn(tokenIn, amountIn, permitParams);
 		maxApproveIfNeeded(tokenIn, swapProtocol, amountIn);
 
@@ -101,7 +102,7 @@ contract FulfillHelper {
 		(bool success, bytes memory returnedData) = swapProtocol.call(swapData);
 		require(success, string(returnedData));
 
-		transferBackRemaining(tokenIn, amountIn);
+		transferBackRemaining(tokenIn, amountBefore);
 
 		if (fulfillToken == address(0)) {
 			fulfillAmount = address(this).balance - fulfillAmount;
@@ -144,10 +145,10 @@ contract FulfillHelper {
 		return modifiedData;
 	}	
 
-	function transferBackRemaining(address token, uint256 maxAmount) internal {
+	function transferBackRemaining(address token, uint256 amountBefore) internal {
 		uint256 remaining = IERC20(token).balanceOf(address(this));
-		if (remaining > 0 && remaining <= maxAmount) {
-			IERC20(token).safeTransfer(msg.sender, remaining);
+		if (remaining > amountBefore) {
+			IERC20(token).safeTransfer(msg.sender, remaining - amountBefore);
 		}
 	}
 
