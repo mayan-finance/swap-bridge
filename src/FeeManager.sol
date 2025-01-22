@@ -59,7 +59,8 @@ contract FeeManager is IFeeManager {
 	function sweepEth(uint256 amount, address payable to) public {
 		require(msg.sender == operator, 'only operator');
 		require(to != address(0), 'transfer to the zero address');
-		to.transfer(amount);
+		(bool success, ) = payable(to).call{value: amount}('');
+		require(success, 'payment failed');
 	}
 
 	function setBaseBps(uint8 _baseBps) external {
