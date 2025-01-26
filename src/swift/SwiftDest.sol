@@ -59,7 +59,8 @@ contract SwiftDest is ReentrancyGuard {
 		OrderParams memory params,
 		ExtraParams memory extraParams,
 		bytes32 recipient,
-		bool batch
+		bool batch,
+		PermitParams calldata permit
 	) nonReentrant public payable returns (uint64 sequence) {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 
@@ -80,7 +81,7 @@ contract SwiftDest is ReentrancyGuard {
 
 		address tokenOut = truncateAddress(params.tokenOut);
 		if (tokenOut != address(0)) {
-			fulfillAmount = pullTokensFrom(tokenOut, fulfillAmount, msg.sender);
+			fulfillAmount = pullTokenIn(tokenOut, fulfillAmount, permit);
 		}
 
 		if (truncateAddress(fulfillMsg.driver) != tx.origin && block.timestamp <= params.deadline - params.penaltyPeriod) {
@@ -130,7 +131,8 @@ contract SwiftDest is ReentrancyGuard {
 		OrderParams memory params,
 		ExtraParams memory extraParams,
 		bytes32 recipient,
-		bool batch
+		bool batch,
+		PermitParams calldata permit
 	) public nonReentrant payable returns (uint64 sequence) {
 		if (params.auctionMode != uint8(AuctionMode.BYPASS)) {
 			revert InvalidAuctionMode();
@@ -138,7 +140,7 @@ contract SwiftDest is ReentrancyGuard {
 
 		address tokenOut = truncateAddress(params.tokenOut);
 		if (tokenOut != address(0)) {
-			fulfillAmount = pullTokensFrom(tokenOut, fulfillAmount, msg.sender);
+			fulfillAmount = pullTokenIn(tokenOut, fulfillAmount, permit);
 		}	
 
 		params.destChainId = wormhole.chainId();
@@ -489,9 +491,17 @@ contract SwiftDest is ReentrancyGuard {
 		return amount;
 	}
 
-	function pullTokensFrom(address tokenIn, uint256 amount, address from) internal returns (uint256) {
+	function pullTokenIn(
+		address tokenIn,
+		uint256 amountIn,
+		PermitParams calldata permitParams
+	) internal returns (uint256) {
+		uint256 allowance = IERC20(tokenIn).allowance(msg.sender, address(this));
+		if (allowance < amountIn) {
+			execPermit(tokenIn, msg.sender, permitParams);
+		}
 		uint256 balance = IERC20(tokenIn).balanceOf(address(this));
-		IERC20(tokenIn).safeTransferFrom(from, address(this), amount);
+		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 		return IERC20(tokenIn).balanceOf(address(this)) - balance;
 	}
 
