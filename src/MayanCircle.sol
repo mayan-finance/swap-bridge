@@ -76,7 +76,6 @@ contract MayanCircle is ReentrancyGuard {
 	error InvalidAmountOut();
 	error DomainNotSet();
 	error AlreadySet();
-	error DepositFeeFailed();
 
 	enum Action {
 		NONE,
@@ -261,7 +260,7 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-		maxApproveIfNeeded(tokenIn, address(cctpTokenMessenger), amountIn);
+		approveIfNeeded(tokenIn, address(cctpTokenMessenger), amountIn, true);
 		uint64 cctpNonce = sendCctp(tokenIn, amountIn, destDomain);
 
 		bytes32 customPayloadHash;
@@ -308,7 +307,7 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-		maxApproveIfNeeded(tokenIn, address(cctpTokenMessenger), amountIn - redeemFee);
+		approveIfNeeded(tokenIn, address(cctpTokenMessenger), amountIn - redeemFee, true);
 		cctpNonce = cctpTokenMessenger.depositForBurnWithCaller(
 			amountIn - redeemFee,
 			destDomain,
@@ -339,7 +338,7 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		IERC20(params.tokenIn).safeTransferFrom(msg.sender, address(this), params.amountIn);
-		maxApproveIfNeeded(params.tokenIn, address(cctpTokenMessenger), params.amountIn);
+		approveIfNeeded(params.tokenIn, address(cctpTokenMessenger), params.amountIn, true);
 		uint64 cctpNonce = sendCctp(params.tokenIn, params.amountIn, getDomain(params.destChain));
 
 		if (params.referrerBps > 100) {
@@ -410,11 +409,6 @@ contract MayanCircle is ReentrancyGuard {
 			revert Unauthorized();
 		}
 
-		uint256 denormalizedGasDrop = deNormalizeAmount(bridgeMsg.gasDrop, ETH_DECIMALS);
-		if (msg.value != denormalizedGasDrop) {
-			revert InvalidGasDrop();
-		}
-
 		(address localToken, uint256 amount) = receiveCctp(cctpMsg, cctpSigs);
 
 		if (bridgeMsg.redeemFee > amount) {
@@ -423,7 +417,14 @@ contract MayanCircle is ReentrancyGuard {
 		depositRelayerFee(msg.sender, localToken, uint256(bridgeMsg.redeemFee));
 		address recipient = truncateAddress(bridgeMsg.destAddr);
 		IERC20(localToken).safeTransfer(recipient, amount - uint256(bridgeMsg.redeemFee));
-		payEth(recipient, denormalizedGasDrop, false);
+
+		if (bridgeMsg.gasDrop > 0) {
+			uint256 denormalizedGasDrop = deNormalizeAmount(bridgeMsg.gasDrop, ETH_DECIMALS);
+			if (msg.value != denormalizedGasDrop) {
+				revert InvalidGasDrop();
+			}
+			payEth(recipient, denormalizedGasDrop, false);
+		}
 	}
 
 	function redeemWithLockedFee(bytes memory cctpMsg, bytes memory cctpSigs, bytes32 unlockerAddr) external nonReentrant payable returns (uint64 sequence) {
@@ -488,7 +489,7 @@ contract MayanCircle is ReentrancyGuard {
 	function unlockFee(
 		bytes memory encodedVm,
 		UnlockFeeMsg memory unlockMsg
-	) public nonReentrant {
+	) external nonReentrant {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 		require(valid, reason);
 
@@ -521,7 +522,7 @@ contract MayanCircle is ReentrancyGuard {
 		bytes memory encodedVm2,
 		UnlockFeeMsg memory unlockMsg,
 		UnlockRefinedFeeMsg memory refinedMsg
-	) public nonReentrant {
+	) external nonReentrant {
 		(IWormhole.VM memory vm1, bool valid1, string memory reason1) = wormhole.parseAndVerifyVM(encodedVm1);
 		require(valid1, reason1);
 
@@ -579,7 +580,7 @@ contract MayanCircle is ReentrancyGuard {
 		FulfillParams memory params,
 		address swapProtocol,
 		bytes memory swapData
-	) public nonReentrant payable {
+	) external nonReentrant payable {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 		require(valid, reason);
 
@@ -607,7 +608,7 @@ contract MayanCircle is ReentrancyGuard {
 		}
 
 		address tokenOut = truncateAddress(fulfillMsg.tokenOut);
-		maxApproveIfNeeded(localToken, swapProtocol, cctpAmount - uint256(fulfillMsg.redeemFee));
+		approveIfNeeded(localToken, swapProtocol, cctpAmount - uint256(fulfillMsg.redeemFee), false);
 
 		uint256 amountOut;
 		if (tokenOut == address(0)) {
@@ -652,7 +653,7 @@ contract MayanCircle is ReentrancyGuard {
 		bytes memory cctpSigs,
 		OrderParams memory orderParams,
 		ExtraParams memory extraParams
-	) public nonReentrant payable {
+	) external nonReentrant payable {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
 		require(valid, reason);
 
@@ -965,18 +966,20 @@ contract MayanCircle is ReentrancyGuard {
 	}
 
 	function validateEmitter(bytes32 emitter, uint16 chainId) view internal {
-		if (emitter != chainIdToEmitter[chainId] && truncateAddress(emitter) != address(this)) {
+		if (emitter != chainIdToEmitter[chainId]) {
 			revert InvalidEmitter();
 		}
 	}
 
-	function maxApproveIfNeeded(address tokenAddr, address spender, uint256 amount) internal {
+	function approveIfNeeded(address tokenAddr, address spender, uint256 amount, bool max) internal {
 		IERC20 token = IERC20(tokenAddr);
 		uint256 currentAllowance = token.allowance(address(this), spender);
 
 		if (currentAllowance < amount) {
-			token.safeApprove(spender, 0);
-			token.safeApprove(spender, type(uint256).max);
+			if (currentAllowance > 0) {
+				token.safeApprove(spender, 0);
+			}
+			token.safeApprove(spender, max ? type(uint256).max : amount);
 		}
 	}
 
@@ -991,9 +994,7 @@ contract MayanCircle is ReentrancyGuard {
 
 	function depositRelayerFee(address relayer, address token, uint256 amount) internal {
 		IERC20(token).transfer(address(feeManager), amount);
-		try feeManager.depositFee(relayer, token, amount) {} catch {
-			revert DepositFeeFailed();
-		}
+		try feeManager.depositFee(relayer, token, amount) {} catch {}
 	}
 
 	function decimalsOf(address token) internal view returns(uint8) {
