@@ -80,6 +80,7 @@ contract MayanCircle is ReentrancyGuard {
 	error DomainNotSet();
 	error DomainAlreadySet();
 	error LengthMismatch();
+	error DepositFeeFailed();
 
 	enum Action {
 		NONE,
@@ -417,8 +418,7 @@ contract MayanCircle is ReentrancyGuard {
 		if (bridgeMsg.redeemFee > amount) {
 			revert InvalidRedeemFee();
 		}
-		maxApproveIfNeeded(localToken, address(feeManager), bridgeMsg.redeemFee);
-		feeManager.depositRelayerFee(msg.sender, localToken, bridgeMsg.redeemFee);
+		depositRelayerFee(msg.sender, localToken, uint256(bridgeMsg.redeemFee));
 		address recipient = truncateAddress(bridgeMsg.destAddr);
 		IERC20(localToken).safeTransfer(recipient, amount - uint256(bridgeMsg.redeemFee));
 		payEth(recipient, denormalizedGasDrop, false);
@@ -989,6 +989,13 @@ contract MayanCircle is ReentrancyGuard {
 			if (success != true) {
 				revert EthTransferFailed();
 			}
+		}
+	}
+
+	function depositRelayerFee(address relayer, address token, uint256 amount) internal {
+		IERC20(token).transfer(address(feeManager), amount);
+		try feeManager.depositFee(relayer, token, amount) {} catch {
+			revert DepositFeeFailed();
 		}
 	}
 
