@@ -79,6 +79,7 @@ contract MayanCircle is ReentrancyGuard {
 	error InvalidAmountOut();
 	error DomainNotSet();
 	error DomainAlreadySet();
+	error LengthMismatch();
 
 	enum Action {
 		NONE,
@@ -1042,10 +1043,6 @@ contract MayanCircle is ReentrancyGuard {
 		paused = _pause;
 	}
 
-	function isPaused() public view returns(bool) {
-		return paused;
-	}
-
 	function rescueToken(address token, uint256 amount, address to) public {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
@@ -1100,14 +1097,19 @@ contract MayanCircle is ReentrancyGuard {
 		chainIdToEmitter[chainId] = emitter;
 	}
 
-	function setDomain(uint16 chainId, uint32 domain) public {
+	function setDomains(uint16[] memory chainIds, uint32[] memory domains) public {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
-		if (chainIdToDomain[chainId] != 0) {
-			revert DomainAlreadySet();
+		if (chainIds.length != domains.length) {
+			revert LengthMismatch();
 		}
-		chainIdToDomain[chainId] = domain + 1; // to distinguish between unset and 0
+		for (uint i = 0; i < chainIds.length; i++) {
+			if (chainIdToDomain[chainIds[i]] != 0) {
+				revert DomainAlreadySet();
+			}
+			chainIdToDomain[chainIds[i]] = domains[i] + 1; // to distinguish between unset and 0
+		}
 	}
 
 	function getDomain(uint16 chainId) public view returns (uint32 domain) {
