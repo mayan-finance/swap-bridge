@@ -9,7 +9,6 @@ import "./libs/BytesLib.sol";
 import "./interfaces/CCTP/IReceiver.sol";
 import "./interfaces/CCTP/ITokenMessenger.sol";
 import "./interfaces/IWormhole.sol";
-import "./interfaces/ITokenBridge.sol";
 import "./interfaces/IFeeManager.sol";
 
 contract MayanCircle is ReentrancyGuard {
@@ -304,7 +303,7 @@ contract MayanCircle is ReentrancyGuard {
 		if (paused) {
 			revert Paused();
 		}
-		if (destDomain == SOLANA_DOMAIN || destDomain == SUI_DOMAIN) {
+		if (bytes12(destAddr) != 0) {
 			revert InvalidDomain();
 		}
 		if (redeemFee == 0) {
@@ -313,7 +312,13 @@ contract MayanCircle is ReentrancyGuard {
 
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 		maxApproveIfNeeded(tokenIn, address(cctpTokenMessenger), amountIn - redeemFee);
-		cctpNonce = sendCctp(tokenIn, amountIn, destDomain);
+		cctpNonce = cctpTokenMessenger.depositForBurnWithCaller(
+			amountIn - redeemFee,
+			destDomain,
+			destAddr,
+			tokenIn,
+			getCaller(destDomain)
+		);
 
 		feeStorage[cctpNonce] = FeeLock({
 			destAddr: destAddr,
