@@ -67,9 +67,7 @@ contract MayanCircle is ReentrancyGuard {
 	error InvalidPayload();
 	error CallerNotSet();
 	error MintRecipientNotSet();
-	error MintRecipientAlreadySet();
 	error InvalidCaller();
-	error CallerAlreadySet();
 	error DeadlineViolation();
 	error InvalidAddress();
 	error InvalidReferrerFee();
@@ -77,8 +75,7 @@ contract MayanCircle is ReentrancyGuard {
 	error EthTransferFailed();
 	error InvalidAmountOut();
 	error DomainNotSet();
-	error DomainAlreadySet();
-	error LengthMismatch();
+	error AlreadySet();
 	error DepositFeeFailed();
 
 	enum Action {
@@ -730,23 +727,18 @@ contract MayanCircle is ReentrancyGuard {
 
 	function getMintRecipient(uint32 destDomain, address tokenIn) internal view returns (bytes32) {
 		bytes32 mintRecepient = keyToMintRecipient[keccak256(abi.encodePacked(destDomain, tokenIn))];
-		if (mintRecepient != bytes32(0)) {
-			return mintRecepient;
-		} else if (destDomain == SOLANA_DOMAIN || destDomain == SUI_DOMAIN) {
+		if (mintRecepient == bytes32(0)) {
 			revert MintRecipientNotSet();
-		} else {
-			return bytes32(uint256(uint160(address(this))));
 		}
+		return mintRecepient;
 	}
+
 	function getCaller(uint32 destDomain) internal view returns (bytes32 caller) {
 		caller = domainToCaller[destDomain];
-		if (caller != bytes32(0)) {
-			return caller;
-		} else if (destDomain == SOLANA_DOMAIN || destDomain == SUI_DOMAIN) {
+		if (caller == bytes32(0)) {
 			revert CallerNotSet();
-		} else {
-			return bytes32(uint256(uint160(address(this))));
 		}
+		return caller;
 	}
 
 	function makePayments(
@@ -1069,15 +1061,12 @@ contract MayanCircle is ReentrancyGuard {
 		payEth(to, amount, true);
 	}
 
-	function setDomainCaller(uint32 domain, bytes32 caller) public {
+	function setDomainCallers(uint32 domain, bytes32 caller) public {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
-		if (caller == bytes32(0)) {
-			revert InvalidCaller();
-		}
 		if (domainToCaller[domain] != bytes32(0)) {
-			revert CallerAlreadySet();
+			revert AlreadySet();
 		}
 		domainToCaller[domain] = caller;
 	}
@@ -1086,12 +1075,9 @@ contract MayanCircle is ReentrancyGuard {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
-		if (mintRecipient == bytes32(0)) {
-			revert InvalidMintRecipient();
-		}
 		bytes32 key = keccak256(abi.encodePacked(destDomain, tokenIn));
 		if (keyToMintRecipient[key] != bytes32(0)) {
-			revert MintRecipientAlreadySet();
+			revert AlreadySet();
 		}
 		keyToMintRecipient[key] = mintRecipient;
 	}
@@ -1100,11 +1086,8 @@ contract MayanCircle is ReentrancyGuard {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
-		if (emitter == bytes32(0)) {
-			revert InvalidEmitter();
-		}
 		if (chainIdToEmitter[chainId] != bytes32(0)) {
-			revert EmitterAlreadySet();
+			revert AlreadySet();
 		}
 		chainIdToEmitter[chainId] = emitter;
 	}
@@ -1113,12 +1096,9 @@ contract MayanCircle is ReentrancyGuard {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
-		if (chainIds.length != domains.length) {
-			revert LengthMismatch();
-		}
 		for (uint i = 0; i < chainIds.length; i++) {
 			if (chainIdToDomain[chainIds[i]] != 0) {
-				revert DomainAlreadySet();
+				revert AlreadySet();
 			}
 			chainIdToDomain[chainIds[i]] = domains[i] + 1; // to distinguish between unset and 0
 		}
