@@ -411,13 +411,7 @@ contract MayanCircle is ReentrancyGuard {
 			revert InvalidGasDrop();
 		}
 
-		address localToken = cctpTokenMessenger.localMinter().getLocalToken(bridgeMsg.cctpDomain, bridgeMsg.burnToken);
-		uint256 amount = IERC20(localToken).balanceOf(address(this));
-		bool success = cctpTokenMessenger.localMessageTransmitter().receiveMessage(cctpMsg, cctpSigs);
-		if (!success) {
-			revert CctpReceiveFailed();
-		}
-		amount = IERC20(localToken).balanceOf(address(this)) - amount;
+		(address localToken, uint256 amount) = receiveCctp(cctpMsg, cctpSigs);
 
 		if (bridgeMsg.redeemFee > amount) {
 			revert InvalidRedeemFee();
@@ -715,8 +709,8 @@ contract MayanCircle is ReentrancyGuard {
 	}
 
 	function receiveCctp(bytes memory cctpMsg, bytes memory cctpSigs) internal returns (address, uint256) {
-		uint32 cctpDomain = cctpMsg.toUint32(4);
-		bytes32 cctpSourceToken = cctpMsg.toBytes32(120);
+		uint32 cctpDomain = cctpMsg.toUint32(CCTP_DOMAIN_INDEX);
+		bytes32 cctpSourceToken = cctpMsg.toBytes32(CCTP_TOKEN_INDEX);
 		address localToken = cctpTokenMessenger.localMinter().getLocalToken(cctpDomain, cctpSourceToken);
 
 		uint256 amount = IERC20(localToken).balanceOf(address(this));
