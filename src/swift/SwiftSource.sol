@@ -180,7 +180,8 @@ contract SwiftSource is ReentrancyGuard {
 		}
 		amountIn = pullTokensFrom(tokenIn, amountIn, trader);
 		if (submissionFee > 0) {
-			IERC20(tokenIn).safeTransferFrom(trader, msg.sender, submissionFee);
+			IERC20(tokenIn).safeTransferFrom(trader, address(feeManager), submissionFee);
+			feeManager.depositFee(msg.sender, tokenIn, submissionFee);
 		}
 
 		uint64 normlizedAmountIn = uint64(normalizeAmount(amountIn, decimalsOf(tokenIn)));
@@ -322,11 +323,13 @@ contract SwiftSource is ReentrancyGuard {
 		uint256 netAmount = amountIn - cancelFee - refundFee;
 		if (tokenIn == address(0)) {
 			payEth(canceler, cancelFee, false);
-			payEth(msg.sender, refundFee, false);
+			payEth(address(feeManager), refundFee, false);
+			feeManager.depositFee(msg.sender, address(0), refundFee);
 			payEth(recipient, netAmount, true);
 		} else {
 			IERC20(tokenIn).safeTransfer(canceler, cancelFee);
-			IERC20(tokenIn).safeTransfer(msg.sender, refundFee);
+			IERC20(tokenIn).safeTransfer(address(feeManager), refundFee);
+			feeManager.depositFee(msg.sender, tokenIn, refundFee);
 			IERC20(tokenIn).safeTransfer(recipient, netAmount);
 		}
 

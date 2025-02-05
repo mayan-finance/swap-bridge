@@ -9,6 +9,7 @@ contract FeeManager is IFeeManager {
 
 	using SafeERC20 for IERC20;
 
+	address public immutable protocol;
 	address public operator;
 	address public nextOperator;
 	address public collector;
@@ -16,7 +17,8 @@ contract FeeManager is IFeeManager {
 
 	mapping (bytes32 => uint256) public relayerFees;
 
-	constructor(address _operator, address _collector, uint8 _baseBps) {
+	constructor(address _protocol, address _operator, address _collector, uint8 _baseBps) {
+		protocol = _protocol;
 		operator = _operator;
 		collector = _collector;
 		baseBps = _baseBps;
@@ -33,18 +35,17 @@ contract FeeManager is IFeeManager {
 		return baseBps;
 	}
 
-	function depositRelayerFee(address relayer, address token, uint256 amount) payable external override {
+	function depositFee(address owner, address token, uint256 amount) payable external override {
+		require(msg.sender == protocol, 'only protocol');
 		if (token == address(0)) {
 			require(msg.value == amount, 'invalid amount');
-		} else {
-			IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 		}
-		bytes32 key = keccak256(abi.encodePacked(relayer, token));
+		bytes32 key = keccak256(abi.encodePacked(owner, token));
 		relayerFees[key] += amount;
-		emit FeeDeposited(relayer, token, amount);
+		emit FeeDeposited(owner, token, amount);
 	}
 
-	function withdrawRelayerFee(address token, uint256 amount) external override {
+	function withdrawFee(address token, uint256 amount) external override {
 		bytes32 key = keccak256(abi.encodePacked(msg.sender, token));
 		require(relayerFees[key] >= amount, 'insufficient balance');
 		relayerFees[key] -= amount;

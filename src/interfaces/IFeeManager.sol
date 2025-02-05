@@ -16,6 +16,6 @@ interface IFeeManager {
 
 	function feeCollector() external view returns (address);
 
-    function depositRelayerFee(address relayer, address token, uint256 amount) payable external;
-    function withdrawRelayerFee(address token, uint256 amount) external;
+    function depositFee(address owner, address token, uint256 amount) payable external;
+    function withdrawFee(address token, uint256 amount) external;
 }
