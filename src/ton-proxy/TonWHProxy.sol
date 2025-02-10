@@ -4,7 +4,6 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "../interfaces/IWormhole.sol";
-import "../interfaces/IFeeManager.sol";
 import "../libs/BytesLib.sol";
 import "../libs/SignatureVerifier.sol";
 import "../swift/SwiftStructs.sol";
@@ -23,7 +22,6 @@ contract TonWHProxy is ReentrancyGuard {
     IWormhole public immutable wormhole;
     uint16 public auctionChainId;
     bytes32 public auctionAddr;
-    IFeeManager public feeManager;
     uint8 public consistencyLevel;
     address public guardian;
     address public nextGuardian;
@@ -40,14 +38,12 @@ contract TonWHProxy is ReentrancyGuard {
 
     constructor(
         address _wormhole,
-        address _feeManager,
         uint16 _auctionChainId,
         bytes32 _auctionAddr,
         uint8 _consistencyLevel
     ) {
         guardian = msg.sender;
         wormhole = IWormhole(_wormhole);
-        feeManager = IFeeManager(_feeManager);
         auctionChainId = _auctionChainId;
         auctionAddr = _auctionAddr;
         consistencyLevel = _consistencyLevel;
@@ -277,10 +273,6 @@ contract TonWHProxy is ReentrancyGuard {
         }
         auctionChainId = _auctionChainId;
         auctionAddr = _auctionAddr;
-    }
-
-    function setFeeManager(address _feeManager) public onlyGuardian {
-        feeManager = IFeeManager(_feeManager);
     }
 
     function setConsistencyLevel(uint8 _consistencyLevel) public onlyGuardian {
