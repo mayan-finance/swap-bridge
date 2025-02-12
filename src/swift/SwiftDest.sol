@@ -112,16 +112,7 @@ contract SwiftDest is ReentrancyGuard {
 			batch: batch
 		}));
 
-		bytes memory encodedUnlockMsg = encodeUnlockMsg(buildUnlockMsg(fulfillMsg.orderHash, params, extraParams, recipient));
-
-		if (batch) {
-			unlockMsgs[fulfillMsg.orderHash] = encodedUnlockMsg;
-		} else {
-			sequence = wormhole.publishMessage{
-				value : wormhole.messageFee()
-			}(0, abi.encodePacked(Action.UNLOCK, encodedUnlockMsg), consistencyLevel);
-		}
-
+		sequence = batchOrSendUnlockMsg(buildUnlockMsg(fulfillMsg.orderHash, params, extraParams, recipient), batch);
 		emit OrderFulfilled(fulfillMsg.orderHash, sequence, fulfillAmount);
 	}
 
@@ -172,16 +163,7 @@ contract SwiftDest is ReentrancyGuard {
 			batch: batch
 		}));
 
-		bytes memory uncodedUnlockMsg = encodeUnlockMsg(buildUnlockMsg(orderHash, params, extraParams, recipient));
-
-		if (batch) {
-			unlockMsgs[orderHash] = uncodedUnlockMsg;
-		} else {
-			sequence = wormhole.publishMessage{
-				value : wormhole.messageFee()
-			}(0, abi.encodePacked(Action.UNLOCK, uncodedUnlockMsg), consistencyLevel);
-		}
-
+		sequence = batchOrSendUnlockMsg(buildUnlockMsg(orderHash, params, extraParams, recipient), batch);
 		emit OrderFulfilled(orderHash, sequence, fulfillAmount);
 	}
 
@@ -353,6 +335,18 @@ contract SwiftDest is ReentrancyGuard {
 			driver: bytes32(uint256(uint160(tx.origin))),
 			fulfillTime: uint64(block.timestamp)
 		});
+	}
+
+	function batchOrSendUnlockMsg(UnlockMsg memory unlockMsg, bool batch) internal returns (uint64 sequence) {
+		bytes memory encodedUnlockMsg = encodeUnlockMsg(unlockMsg);
+
+		if (batch) {
+			unlockMsgs[unlockMsg.orderHash] = encodedUnlockMsg;
+		} else {
+			return wormhole.publishMessage{
+				value : wormhole.messageFee()
+			}(0, abi.encodePacked(Action.UNLOCK, encodedUnlockMsg), consistencyLevel);
+		}
 	}
 
 	function buildKey(
