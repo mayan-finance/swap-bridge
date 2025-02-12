@@ -6,7 +6,6 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "../interfaces/IWormhole.sol";
-import "../interfaces/IFeeManager.sol";
 import "../libs/BytesLib.sol";
 import "../libs/SignatureVerifier.sol";
 import "./SwiftStructs.sol";
@@ -28,7 +27,6 @@ contract SwiftDest is ReentrancyGuard {
 	IWormhole public immutable wormhole;
 	uint16 public auctionChainId;
 	bytes32 public auctionAddr;
-	IFeeManager public feeManager;
 	uint8 public consistencyLevel;
 	address public guardian;
 	address public nextGuardian;
@@ -40,14 +38,12 @@ contract SwiftDest is ReentrancyGuard {
 
 	constructor(
 		address _wormhole,
-		address _feeManager,
 		uint16 _auctionChainId,
 		bytes32 _auctionAddr,
 		uint8 _consistencyLevel
 	) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
-		feeManager = IFeeManager(_feeManager);
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
 		consistencyLevel = _consistencyLevel;
@@ -391,11 +387,11 @@ contract SwiftDest is ReentrancyGuard {
 		fulfillMsg.orderHash = encoded.toBytes32(index);
 		index += 32;
 
-		fulfillMsg.driver = encoded.toBytes32(index);
-		index += 32;
-
 		fulfillMsg.promisedAmount = encoded.toUint64(index);
 		index += 8;
+
+		fulfillMsg.driver = encoded.toBytes32(index);
+		index += 32;
 	}
 
 	function encodeKey(Key memory key) internal pure returns (bytes memory encoded) {
@@ -531,13 +527,6 @@ contract SwiftDest is ReentrancyGuard {
 		}
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
-	}	
-
-	function setFeeManager(address _feeManager) public {
-		if (msg.sender != guardian) {
-			revert Unauthorized();
-		}
-		feeManager = IFeeManager(_feeManager);
 	}
 
 	function setConsistencyLevel(uint8 _consistencyLevel) public {

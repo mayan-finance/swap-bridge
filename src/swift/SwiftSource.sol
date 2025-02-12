@@ -27,10 +27,7 @@ contract SwiftSource is ReentrancyGuard {
 	uint8 constant NATIVE_DECIMALS = 18;
 
 	IWormhole public immutable wormhole;
-	uint16 public auctionChainId;
-	bytes32 public auctionAddr;
 	IFeeManager public feeManager;
-	uint8 public consistencyLevel;
 	address public guardian;
 	address public nextGuardian;
 	bool public paused;
@@ -40,19 +37,10 @@ contract SwiftSource is ReentrancyGuard {
 	mapping(bytes32 => Order) public orders;
 	mapping(uint16 => bytes32) public emitters;
 
-	constructor(
-		address _wormhole,
-		address _feeManager,
-		uint16 _auctionChainId,
-		bytes32 _auctionAddr,
-		uint8 _consistencyLevel
-	) {
+	constructor(address _wormhole, address _feeManager) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
 		feeManager = IFeeManager(_feeManager);
-		auctionChainId = _auctionChainId;
-		auctionAddr = _auctionAddr;
-		consistencyLevel = _consistencyLevel;
 
 		domainSeparator = keccak256(abi.encode(
 			keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)"),
@@ -688,13 +676,6 @@ contract SwiftSource is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		feeManager = IFeeManager(_feeManager);
-	}
-
-	function setConsistencyLevel(uint8 _consistencyLevel) public {
-		if (msg.sender != guardian) {
-			revert Unauthorized();
-		}
-		consistencyLevel = _consistencyLevel;
 	}
 
 	function setEmitterAddr(uint16 chainId, bytes32 addr) public {
