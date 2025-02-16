@@ -106,7 +106,7 @@ struct UnlockMsg {
 	bytes32	referrerAddr;
 	uint8 referrerBps;
 	uint8 protocolBps;		
-	bytes32 recipient;
+	bytes32 unlockReceiver;
 	bytes32 driver;
 	uint64 fulfillTime;
 }
@@ -117,7 +117,7 @@ struct RefundMsg {
 	bytes32 orderHash;
 	uint16 srcChainId;
 	bytes32 tokenIn;
-	bytes32 recipient;
+	bytes32 trader;
 	bytes32 canceler;
 	uint64 cancelFee;
 	uint64 refundFee;

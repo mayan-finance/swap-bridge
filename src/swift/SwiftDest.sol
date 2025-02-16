@@ -192,7 +192,7 @@ contract SwiftDest is ReentrancyGuard {
 			orderHash: orderHash,
 			srcChainId: extraParams.srcChainId,
 			tokenIn: extraParams.tokenIn,
-			recipient: params.trader,
+			trader: params.trader,
 			canceler: canceler,
 			cancelFee: params.cancelFee,
 			refundFee: params.refundFee
@@ -327,7 +327,7 @@ contract SwiftDest is ReentrancyGuard {
 			referrerAddr: params.referrerAddr,
 			referrerBps: params.referrerBps,
 			protocolBps: extraParams.protocolBps,
-			recipient: recipient,
+			unlockReceiver: recipient,
 			driver: bytes32(uint256(uint160(tx.origin))),
 			fulfillTime: uint64(block.timestamp)
 		});
@@ -431,7 +431,7 @@ contract SwiftDest is ReentrancyGuard {
 			unlockMsg.referrerAddr,
 			unlockMsg.referrerBps,
 			unlockMsg.protocolBps,
-			unlockMsg.recipient,
+			unlockMsg.unlockReceiver,
 			unlockMsg.driver,
 			unlockMsg.fulfillTime
 		);
@@ -443,7 +443,7 @@ contract SwiftDest is ReentrancyGuard {
 			refundMsg.orderHash,
 			refundMsg.srcChainId,
 			refundMsg.tokenIn,
-			refundMsg.recipient,
+			refundMsg.trader,
 			refundMsg.canceler,
 			refundMsg.cancelFee,
 			refundMsg.refundFee

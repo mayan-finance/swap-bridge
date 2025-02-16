@@ -224,7 +224,7 @@ contract SwiftSource is ReentrancyGuard {
 		}
 		orders[unlockMsg.orderHash].status = Status.UNLOCKED;
 		
-		address recipient = truncateAddress(unlockMsg.recipient);
+		address receiver = truncateAddress(unlockMsg.unlockReceiver);
 		address tokenIn = truncateAddress(unlockMsg.tokenIn);
 		uint8 decimals;
 		if (tokenIn == address(0)) {
@@ -249,7 +249,7 @@ contract SwiftSource is ReentrancyGuard {
 				payEth(feeCollector, deNormalizeAmount(normalizedProtocolFee, decimals), false);
 			}
 			if (netAmount > 0) {
-				payEth(recipient, deNormalizeAmount(netAmount, decimals), true);
+				payEth(receiver, deNormalizeAmount(netAmount, decimals), true);
 			}
 		} else {
 			if (normalizedReferrerFee > 0 && referrerAddress != address(0)) {
@@ -259,7 +259,7 @@ contract SwiftSource is ReentrancyGuard {
 				IERC20(tokenIn).safeTransfer(feeCollector, deNormalizeAmount(normalizedProtocolFee, decimals));
 			}
 			if (netAmount > 0) {
-				IERC20(tokenIn).safeTransfer(recipient, deNormalizeAmount(netAmount, decimals));
+				IERC20(tokenIn).safeTransfer(receiver, deNormalizeAmount(netAmount, decimals));
 			}
 		}
 		
@@ -292,7 +292,7 @@ contract SwiftSource is ReentrancyGuard {
 			revert InvalidEmitterAddress();
 		}
 
-		address recipient = truncateAddress(refundMsg.recipient);
+		address trader = truncateAddress(refundMsg.trader);
 		// no error if canceler is invalid
 		address canceler = address(uint160(uint256(refundMsg.canceler)));
 		address tokenIn = truncateAddress(refundMsg.tokenIn);
@@ -313,12 +313,12 @@ contract SwiftSource is ReentrancyGuard {
 			payEth(canceler, cancelFee, false);
 			payEth(address(feeManager), refundFee, false);
 			feeManager.depositFee(msg.sender, address(0), refundFee);
-			payEth(recipient, netAmount, true);
+			payEth(trader, netAmount, true);
 		} else {
 			IERC20(tokenIn).safeTransfer(canceler, cancelFee);
 			IERC20(tokenIn).safeTransfer(address(feeManager), refundFee);
 			feeManager.depositFee(msg.sender, tokenIn, refundFee);
-			IERC20(tokenIn).safeTransfer(recipient, netAmount);
+			IERC20(tokenIn).safeTransfer(trader, netAmount);
 		}
 
 		emit OrderRefunded(refundMsg.orderHash, netAmount);
@@ -407,7 +407,7 @@ contract SwiftSource is ReentrancyGuard {
 				referrerAddr: payload.toBytes32(currentOffset + 66),
 				referrerBps: payload.toUint8(currentOffset + 98),
 				protocolBps: payload.toUint8(currentOffset + 99),
-				recipient: payload.toBytes32(currentOffset + 100),
+				unlockReceiver: payload.toBytes32(currentOffset + 100),
 				driver: payload.toBytes32(currentOffset + 132),
 				fulfillTime: payload.toUint64(currentOffset + 164)
 			});
@@ -507,7 +507,7 @@ contract SwiftSource is ReentrancyGuard {
 		unlockMsg.protocolBps = encoded.toUint8(index);
 		index += 1;
 
-		unlockMsg.recipient = encoded.toBytes32(index);
+		unlockMsg.unlockReceiver = encoded.toBytes32(index);
 		index += 32;
 	}
 
@@ -530,7 +530,7 @@ contract SwiftSource is ReentrancyGuard {
 		refundMsg.tokenIn = encoded.toBytes32(index);
 		index += 32;
 
-		refundMsg.recipient = encoded.toBytes32(index);
+		refundMsg.trader = encoded.toBytes32(index);
 		index += 32;
 
 		refundMsg.canceler = encoded.toBytes32(index);
@@ -569,29 +569,6 @@ contract SwiftSource is ReentrancyGuard {
 			key.random,
 			key.customPayloadHash
 		));
-	}
-
-	function encodeUnlockMsg(UnlockMsg memory unlockMsg) internal pure returns (bytes memory encoded) {
-		encoded = abi.encodePacked(
-			unlockMsg.action,
-			unlockMsg.orderHash,
-			unlockMsg.srcChainId,
-			unlockMsg.tokenIn,
-			unlockMsg.recipient
-		);
-	}
-
-	function encodeRefundMsg(RefundMsg memory refundMsg) internal pure returns (bytes memory encoded) {
-		encoded = abi.encodePacked(
-			refundMsg.action,
-			refundMsg.orderHash,
-			refundMsg.srcChainId,
-			refundMsg.tokenIn,
-			refundMsg.recipient,
-			refundMsg.canceler,
-			refundMsg.cancelFee,
-			refundMsg.refundFee
-		);
 	}
 
 	function payEth(address to, uint256 amount, bool revertOnFailure) internal {
