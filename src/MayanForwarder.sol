@@ -99,13 +99,13 @@ contract MayanForwarder {
 		require(success, string(returnedData));
 
 		middleAmount = IERC20(middleToken).balanceOf(address(this)) - middleAmount;
-		require(middleAmount >= minMiddleAmount, "MayanForwarder: insufficient middle token amount");
+		require(middleAmount >= minMiddleAmount, "insufficient middle token");
 
 		maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
 
 		bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
 		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(modifiedData);
-		require(success, string(returnedData));
+		require(success, "mayan protocol call failed");
 
 		emit SwapAndForwardedEth(amountIn, swapProtocol, middleToken, middleAmount, mayanProtocol, mayanData);
 	}
@@ -128,19 +128,33 @@ contract MayanForwarder {
 
 		pullTokenIn(tokenIn, amountIn, permitParams);
 
+		uint256 middleAmount;
+		if (middleToken != address(0)) {
+			middleAmount = IERC20(middleToken).balanceOf(address(this));
+		} else {
+			middleAmount = address(this).balance;
+		}
+
 		maxApproveIfNeeded(tokenIn, swapProtocol, amountIn);
-		uint256 middleAmount = IERC20(middleToken).balanceOf(address(this));
-
 		(bool success, bytes memory returnedData) = swapProtocol.call{value: 0}(swapData);
-		require(success, string(returnedData));
+		require(success, "swap protocol call failed");
 
-		middleAmount = IERC20(middleToken).balanceOf(address(this)) - middleAmount;
+		if (middleToken != address(0)) {
+			middleAmount = IERC20(middleToken).balanceOf(address(this)) - middleAmount;
+		} else {
+			middleAmount = address(this).balance - middleAmount;
+		}
 		require(middleAmount >= minMiddleAmount, "insufficient middle token");
 
-		maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
-		bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
-		(success, returnedData) = mayanProtocol.call{value: msg.value}(modifiedData);
-		require(success, string(returnedData));
+		uint256 val = msg.value;
+		if (middleToken == address(0)) {
+			val += middleAmount;
+		} else {
+			maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
+		}
+
+		(success, returnedData) = mayanProtocol.call{value: val}(replaceMiddleAmount(mayanData, middleAmount));
+		require(success, "mayan protocol call failed");
 
 		transferBackRemaining(tokenIn, amountIn);
 
@@ -246,4 +260,6 @@ contract MayanForwarder {
 		require(msg.sender == guardian, 'only guardian');
 		mayanProtocols[mayanProtocol] = enabled;
 	}
+
+	receive() external payable {}
 }
