@@ -211,7 +211,7 @@ contract SwiftDest is ReentrancyGuard {
 		bytes memory encoded;
 		for(uint i=0; i<orderHashes.length; i++) {
 			bytes memory unlockMsg = unlockMsgs[orderHashes[i]];
-			if (unlockMsg.length == UNLOCK_MSG_SIZE) {
+			if (unlockMsg.length != UNLOCK_MSG_SIZE) {
 				revert OrderNotExists(orderHashes[i]);
 			}
 			encoded = abi.encodePacked(encoded, unlockMsg);
