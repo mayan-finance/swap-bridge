@@ -81,7 +81,7 @@ contract SwiftSource is ReentrancyGuard {
 
 		orderHash = keccak256(encodeKey(key));
 
-		if (params.destChainId == 0 || params.destChainId == wormhole.chainId()) {
+		if (emitters[params.destChainId] == 0 || params.destChainId == wormhole.chainId()) {
 			revert InvalidDestChain();
 		}
 		if (orders[orderHash].destChainId != 0) {
@@ -133,7 +133,7 @@ contract SwiftSource is ReentrancyGuard {
 
 		orderHash = keccak256(encodeKey(key));
 
-		if (params.destChainId == 0 || params.destChainId == wormhole.chainId()) {
+		if (emitters[params.destChainId] == 0 || params.destChainId == wormhole.chainId()) {
 			revert InvalidDestChain();
 		}
 		if (orders[orderHash].destChainId != 0) {
@@ -199,7 +199,7 @@ contract SwiftSource is ReentrancyGuard {
 
 		signedOrderHash.verify(hashTypedData(orderHash, amountIn, submissionFee), trader);
 
-		if (params.destChainId == 0 || params.destChainId == wormhole.chainId()) {
+		if (emitters[params.destChainId] == 0 || params.destChainId == wormhole.chainId()) {
 			revert InvalidDestChain();
 		}
 		if (orders[orderHash].destChainId != 0) {
@@ -288,7 +288,7 @@ contract SwiftSource is ReentrancyGuard {
 		if (vm.emitterChainId != order.destChainId) {
 			revert InvalidEmitterChain();
 		}
-		if (truncateAddress(vm.emitterAddress) != address(this) && vm.emitterAddress != emitters[order.destChainId]) {
+		if (vm.emitterAddress != emitters[order.destChainId]) {
 			revert InvalidEmitterAddress();
 		}
 
@@ -338,7 +338,7 @@ contract SwiftSource is ReentrancyGuard {
 		if (vm.emitterChainId != order.destChainId) {
 			revert InvalidEmitterChain();
 		}
-		if (truncateAddress(vm.emitterAddress) != address(this) && vm.emitterAddress != emitters[order.destChainId]) {
+		if (vm.emitterAddress != emitters[order.destChainId]) {
 			revert InvalidEmitterAddress();
 		}
 
@@ -419,7 +419,7 @@ contract SwiftSource is ReentrancyGuard {
 			if (emitterChainId != order.destChainId) {
 				revert InvalidEmitterChain();
 			}
-			if (truncateAddress(emitterAddress) != address(this) && emitterAddress != emitters[order.destChainId]) {
+			if (emitterAddress != emitters[order.destChainId]) {
 				revert InvalidEmitterAddress();
 			}
 
@@ -655,17 +655,17 @@ contract SwiftSource is ReentrancyGuard {
 		feeManager = IFeeManager(_feeManager);
 	}
 
-	function setEmitterAddr(uint16 chainId, bytes32 addr) public {
+	function setEmitters(uint16[] memory chainIds, bytes32[] memory addresses) public {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
-		if (addr == bytes32(0)) {
-			revert InvalidEmitterAddress();
+		require(chainIds.length == addresses.length, 'invalid array length');
+		for (uint i=0; i<chainIds.length; i++) {
+			if (emitters[chainIds[i]] != bytes32(0)) {
+				revert EmitterAddressExists();
+			}
+			emitters[chainIds[i]] = addresses[i];
 		}
-		if (emitters[chainId] != bytes32(0)) {
-			revert EmitterAddressExists();
-		}
-		emitters[chainId] = addr;
 	}
 
 	function changeGuardian(address newGuardian) public {
