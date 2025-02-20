@@ -25,6 +25,7 @@ contract SwiftDest is ReentrancyGuard {
 	uint8 constant NATIVE_DECIMALS = 18;
 
 	IWormhole public immutable wormhole;
+	address public auctionVerifier;
 	uint16 public auctionChainId;
 	bytes32 public auctionAddr;
 	uint8 public consistencyLevel;
@@ -38,12 +39,14 @@ contract SwiftDest is ReentrancyGuard {
 
 	constructor(
 		address _wormhole,
+		address _auctionVerifier,
 		uint16 _auctionChainId,
 		bytes32 _auctionAddr,
 		uint8 _consistencyLevel
 	) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
+		auctionVerifier = _auctionVerifier;
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
 		consistencyLevel = _consistencyLevel;
@@ -58,7 +61,7 @@ contract SwiftDest is ReentrancyGuard {
 		bool batch,
 		PermitParams calldata permit
 	) nonReentrant public payable returns (uint64 sequence) {
-		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+		(IWormhole.VM memory vm, bool valid, string memory reason) = IWormhole(auctionVerifier).parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
 		if (vm.emitterChainId != auctionChainId) {
@@ -518,13 +521,14 @@ contract SwiftDest is ReentrancyGuard {
 		paused = _pause;
 	}
 
-	function setAuctionConfig(uint16 _auctionChainId, bytes32 _auctionAddr) public {
+	function setAuctionConfig(address _auctionVerifier, uint16 _auctionChainId, bytes32 _auctionAddr) public {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
 		if (_auctionChainId == 0 || _auctionAddr == bytes32(0)) {
 			revert InvalidAuctionConfig();
 		}
+		auctionVerifier = _auctionVerifier;
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
 	}
