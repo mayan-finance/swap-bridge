@@ -52,8 +52,8 @@ contract MayanForwarder {
 		if (!mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
 		}
-		(bool success, bytes memory returnedData) = mayanProtocol.call{value: msg.value}(protocolData);
-		require(success, string(returnedData));
+		(bool success, ) = mayanProtocol.call{value: msg.value}(protocolData);
+		require(success, "mayan protocol call failed");
 
 		emit ForwardedEth(mayanProtocol, protocolData);
 	}
@@ -72,8 +72,8 @@ contract MayanForwarder {
 		pullTokenIn(tokenIn, amountIn, permitParams);
 
 		maxApproveIfNeeded(tokenIn, mayanProtocol, amountIn);
-		(bool success, bytes memory returnedData) = mayanProtocol.call{value: msg.value}(protocolData);
-		require(success, string(returnedData));
+		(bool success, ) = mayanProtocol.call{value: msg.value}(protocolData);
+		require(success, "mayan protocol call failed");
 
 		emit ForwardedERC20(tokenIn, amountIn, mayanProtocol, protocolData);
 	}
@@ -95,8 +95,8 @@ contract MayanForwarder {
 		require(msg.value >= amountIn, "insufficient amountIn");
 		uint256 middleAmount = IERC20(middleToken).balanceOf(address(this));
 
-		(bool success, bytes memory returnedData) = swapProtocol.call{value: amountIn}(swapData);
-		require(success, string(returnedData));
+		(bool success, ) = swapProtocol.call{value: amountIn}(swapData);
+		require(success, "swap call failed");
 
 		middleAmount = IERC20(middleToken).balanceOf(address(this)) - middleAmount;
 		require(middleAmount >= minMiddleAmount, "insufficient middle token");
@@ -104,7 +104,7 @@ contract MayanForwarder {
 		maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
 
 		bytes memory modifiedData = replaceMiddleAmount(mayanData, middleAmount);
-		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(modifiedData);
+		(success, ) = mayanProtocol.call{value: msg.value - amountIn}(modifiedData);
 		require(success, "mayan protocol call failed");
 
 		emit SwapAndForwardedEth(amountIn, swapProtocol, middleToken, middleAmount, mayanProtocol, mayanData);
@@ -125,7 +125,7 @@ contract MayanForwarder {
 			revert UnsupportedProtocol();
 		}
 		require(tokenIn != middleToken, "tokenIn and tokenOut must be different");
-
+		uint256 amountBefore = IERC20(tokenIn).balanceOf(address(this));
 		pullTokenIn(tokenIn, amountIn, permitParams);
 
 		uint256 middleAmount;
@@ -136,7 +136,7 @@ contract MayanForwarder {
 		}
 
 		maxApproveIfNeeded(tokenIn, swapProtocol, amountIn);
-		(bool success, bytes memory returnedData) = swapProtocol.call{value: 0}(swapData);
+		(bool success, ) = swapProtocol.call{value: 0}(swapData);
 		require(success, "swap protocol call failed");
 
 		if (middleToken != address(0)) {
@@ -153,10 +153,10 @@ contract MayanForwarder {
 			maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
 		}
 
-		(success, returnedData) = mayanProtocol.call{value: val}(replaceMiddleAmount(mayanData, middleAmount));
+		(success, ) = mayanProtocol.call{value: val}(replaceMiddleAmount(mayanData, middleAmount));
 		require(success, "mayan protocol call failed");
 
-		transferBackRemaining(tokenIn, amountIn);
+		transferBackRemaining(tokenIn, amountBefore);
 
 		emit SwapAndForwardedERC20(tokenIn, amountIn, swapProtocol, middleToken, middleAmount, mayanProtocol, mayanData);
 	}
@@ -223,10 +223,10 @@ contract MayanForwarder {
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 	}
 
-	function transferBackRemaining(address token, uint256 maxAmount) internal {
+	function transferBackRemaining(address token, uint256 amountBefore) internal {
 		uint256 remaining = IERC20(token).balanceOf(address(this));
-		if (remaining > 0 && remaining <= maxAmount) {
-			IERC20(token).safeTransfer(msg.sender, remaining);
+		if (remaining > amountBefore) {
+			IERC20(token).safeTransfer(msg.sender, remaining - amountBefore);
 		}
 	}
 
@@ -238,7 +238,8 @@ contract MayanForwarder {
 	function rescueEth(uint256 amount, address payable to) public {
 		require(msg.sender == guardian, 'only guardian');
 		require(to != address(0), 'transfer to the zero address');
-		to.transfer(amount);
+		(bool success, ) = payable(to).call{value: amount}('');
+		require(success, 'payment failed');
 	}
 
 	function changeGuardian(address newGuardian) public {
