@@ -121,52 +121,6 @@ contract FulfillHelper {
 		}
 	}
 
-	function fulfillWithOkx(
-		address tokenIn,
-		uint256 amountIn,
-		address fulfillToken,
-		address swapProtocol,
-		bytes calldata swapData,
-		address mayanProtocol,
-		bytes calldata mayanData,
-		PermitParams calldata permitParams,
-		address okxAllowanceProxy
-	) external payable {
-		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
-			revert UnsupportedProtocol();
-		}
-		pullTokenIn(tokenIn, amountIn, permitParams);
-		maxApproveIfNeeded(tokenIn, okxAllowanceProxy, amountIn);
-
-		uint256 fulfillAmount;
-		if (fulfillToken == address(0)) {
-			fulfillAmount = address(this).balance;
-		} else {
-			fulfillAmount = IERC20(fulfillToken).balanceOf(address(this));
-		}
-
-		(bool success, bytes memory returnedData) = swapProtocol.call(swapData);
-		require(success, string(returnedData));
-
-		transferBackRemaining(tokenIn, amountIn);
-
-		if (fulfillToken == address(0)) {
-			fulfillAmount = address(this).balance - fulfillAmount;
-		} else {
-			fulfillAmount = IERC20(fulfillToken).balanceOf(address(this)) - fulfillAmount;
-		}
-
-		bytes memory modifiedData = replaceFulfillAmount(mayanData, fulfillAmount);
-		if (fulfillToken == address(0)) {
-			(success, returnedData) = mayanProtocol.call{value: msg.value + fulfillAmount}(modifiedData);
-			require(success, string(returnedData));
-		} else {
-			maxApproveIfNeeded(fulfillToken, mayanProtocol, fulfillAmount);
-			(success, returnedData) = mayanProtocol.call{value: msg.value}(modifiedData);
-			require(success, string(returnedData));
-		}
-	}
-
 	function replaceFulfillAmount(bytes calldata mayanData, uint256 fulfillAmount) internal pure returns(bytes memory) {
 		require(mayanData.length >= 36, "Mayan data too short");
 		bytes memory modifiedData = new bytes(mayanData.length);
