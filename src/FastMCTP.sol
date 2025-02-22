@@ -87,6 +87,10 @@ contract FastMCTP is ReentrancyGuard {
 
 		BridgePayload memory bridgePayload = recreateBridgePayload(cctpMsg);
 
+		if (bridgePayload.payloadType != 1 && bridgePayload.payloadType != 2) {
+			revert InvalidPayloadType();
+		}
+
 		address recipient = truncateAddress(bridgePayload.destAddr);
 		if (bridgePayload.payloadType == 2 && msg.sender != recipient) {
 			revert Unauthorized();
@@ -134,6 +138,7 @@ contract FastMCTP is ReentrancyGuard {
 		}
 
 		address tokenOut = truncateAddress(orderPayload.tokenOut);
+		require(tokenOut != localToken, "tokenOut cannot be localToken");
 		approveIfNeeded(localToken, swapProtocol, cctpAmount - uint256(orderPayload.redeemFee), false);
 
 		uint256 amountOut;
