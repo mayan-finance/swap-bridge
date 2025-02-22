@@ -16,7 +16,6 @@ contract FastMCTP is ReentrancyGuard {
 	ITokenMessengerV2 public immutable cctpTokenMessengerV2;
 	IFeeManager public feeManager;
 
-	uint8 public consistencyLevel;
 	address public guardian;
 	address nextGuardian;
 
@@ -71,12 +70,10 @@ contract FastMCTP is ReentrancyGuard {
 
 	constructor(
 		address _cctpTokenMessengerV2,
-		address _feeManager,
-		uint8 _consistencyLevel
+		address _feeManager
 	) {
 		cctpTokenMessengerV2 = ITokenMessengerV2(_cctpTokenMessengerV2);
 		feeManager = IFeeManager(_feeManager);
-		consistencyLevel = _consistencyLevel;
 		guardian = msg.sender;
 	}
 
@@ -344,13 +341,6 @@ contract FastMCTP is ReentrancyGuard {
 		}
 		feeManager = IFeeManager(_feeManager);
 	}	
-
-	function setConsistencyLevel(uint8 _consistencyLevel) public {
-		if (msg.sender != guardian) {
-			revert Unauthorized();
-		}
-		consistencyLevel = _consistencyLevel;
-	}
 
 	function rescueToken(address token, uint256 amount, address to) public {
 		if (msg.sender != guardian) {
