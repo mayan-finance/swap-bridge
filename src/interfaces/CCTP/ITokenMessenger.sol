@@ -9,6 +9,13 @@ interface ITokenMessenger {
 	function localMessageTransmitter() external view returns (IMessageTransmitter);
 	function localMinter() external view returns (ITokenMinter);
 
+	function depositForBurn(
+		uint256 amount,
+		uint32 destinationDomain,
+		bytes32 mintRecipient,
+		address burnToken
+	) external returns (uint64 nonce);
+
 	function depositForBurnWithCaller(
 		uint256 amount,
 		uint32 destinationDomain,
