@@ -16,8 +16,12 @@ contract FastMCTP is ReentrancyGuard {
 	ITokenMessengerV2 public immutable cctpTokenMessengerV2;
 	IFeeManager public feeManager;
 
+	mapping(bytes32 => bytes32) public keyToMintRecipient;
+	mapping(uint32 => bytes32) public domainToCaller;
+
 	address public guardian;
 	address nextGuardian;
+	bool public paused;
 
 	uint8 constant ETH_DECIMALS = 18;
 
@@ -30,9 +34,12 @@ contract FastMCTP is ReentrancyGuard {
 	uint256 constant CCTPV2_MINT_RECIPIENT_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 36;
 	uint256 constant HOOK_DATA_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 228;
 
+	uint32 constant MIN_FINALITY_THRESHOLD = 0;
+
 	event OrderFulfilled(uint32 sourceDomain, bytes32 sourceNonce, uint256 amount);
 	event OrderRefunded(uint32 sourceDomain, bytes32 sourceNonce, uint256 amount);
 
+	error Paused();
 	error Unauthorized();
 	error CctpReceiveFailed();
 	error InvalidGasDrop();
@@ -44,6 +51,10 @@ contract FastMCTP is ReentrancyGuard {
 	error InvalidPayloadType();
 	error EthTransferFailed();
 	error InvalidAmountOut();
+	error MintRecipientNotSet();
+	error CallerNotSet();
+	error InvalidRefundFee();
+	error AlreadySet();
 
 	struct BridgePayload {
 		uint8 payloadType;
@@ -68,6 +79,20 @@ contract FastMCTP is ReentrancyGuard {
 		uint8 referrerBps;
 	}
 
+	modifier checkRecipient(bytes memory cctpMsg) {
+		if (truncateAddress(cctpMsg.toBytes32(CCTPV2_MINT_RECIPIENT_INDEX)) != address(this)) {
+			revert InvalidMintRecipient();
+		}
+		_;
+	}
+
+	modifier whenNotPaused() {
+		if (paused) {
+			revert Paused();
+		}
+		_;
+	}
+
 	constructor(
 		address _cctpTokenMessengerV2,
 		address _feeManager
@@ -77,13 +102,77 @@ contract FastMCTP is ReentrancyGuard {
 		guardian = msg.sender;
 	}
 
-	function redeemWithFee(
+	function bridge(
+		address tokenIn,
+		uint256 amountIn,
+		uint64 redeemFee,
+		uint256 circleMaxFee,
+		uint64 gasDrop,
+		bytes32 destAddr,
+		uint32 destDomain,
+		bytes32 referrerAddress,
+		uint8 referrerBps,
+		uint8 payloadType,
+		bytes memory customPayload
+	) external payable nonReentrant whenNotPaused {
+		if (redeemFee + circleMaxFee >= amountIn) {
+			revert InvalidRedeemFee();
+		}
+
+		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+		approveIfNeeded(tokenIn, address(cctpTokenMessengerV2), amountIn, true);
+
+		require(referrerBps <= 100, "ReferrerBps should be less than 100");
+
+		bytes32 customPayloadHash;
+		if (payloadType == 2) {
+			customPayloadHash = keccak256(customPayload);
+		}
+
+		BridgePayload memory bridgePayload = BridgePayload({
+			payloadType: payloadType,
+			destAddr: destAddr,
+			gasDrop: gasDrop,
+			redeemFee: redeemFee,
+			referrerAddr: referrerAddress,
+			referrerBps: referrerBps,
+			customPayload: customPayloadHash
+		});
+
+		sendCctp(tokenIn, amountIn, destDomain, circleMaxFee, encodeBridgePayload(bridgePayload));
+	}
+
+	function createOrder(
+		address tokenIn,
+		uint256 amountIn,
+		uint256 circleMaxFee,
+		uint32 destDomain,
+		OrderPayload memory orderPayload
+	) external payable nonReentrant whenNotPaused {
+		if (orderPayload.redeemFee + circleMaxFee >= amountIn) {
+			revert InvalidRedeemFee();
+		}
+
+		if (orderPayload.refundFee + circleMaxFee >= amountIn) {
+			revert InvalidRefundFee();
+		}
+
+		require(orderPayload.referrerBps <= 100, "ReferrerBps should be less than 100");
+
+		if (orderPayload.tokenOut == bytes32(0) && orderPayload.gasDrop > 0) {
+			revert InvalidGasDrop();
+		}
+
+		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+		approveIfNeeded(tokenIn, address(cctpTokenMessengerV2), amountIn, true);
+
+		sendCctp(tokenIn, amountIn, destDomain, circleMaxFee, encodeOrderPayload(orderPayload));
+	}
+
+	function redeem(
 		bytes memory cctpMsg,
 		bytes memory cctpSigs
-	) external nonReentrant payable {
-		if (truncateAddress(cctpMsg.toBytes32(CCTPV2_MINT_RECIPIENT_INDEX)) != address(this)) {
-			revert InvalidMintRecipient();
-		}
+	) external nonReentrant payable checkRecipient(cctpMsg) {
 
 		BridgePayload memory bridgePayload = recreateBridgePayload(cctpMsg);
 
@@ -102,8 +191,25 @@ contract FastMCTP is ReentrancyGuard {
 			revert InvalidRedeemFee();
 		}
 
+		amount = amount - uint256(bridgePayload.redeemFee);
+
+		uint8 referrerBps = bridgePayload.referrerBps > 100 ? 100 : bridgePayload.referrerBps;
+		uint8 protocolBps = feeManager.calcFastMCTPProtocolBps(
+			bridgePayload.payloadType,
+			localToken,
+			amount,
+			localToken,
+			truncateAddress(bridgePayload.referrerAddr),
+			referrerBps
+		);
+		protocolBps = protocolBps > 100 ? 100 : protocolBps;
+		uint256 protocolAmount = amount * protocolBps / 10000;
+		uint256 referrerAmount = amount * referrerBps / 10000;
+
 		depositRelayerFee(msg.sender, localToken, uint256(bridgePayload.redeemFee));
-		IERC20(localToken).safeTransfer(recipient, amount - uint256(bridgePayload.redeemFee));
+		IERC20(localToken).safeTransfer(recipient, amount - protocolAmount - referrerAmount);
+		IERC20(localToken).safeTransfer(address(uint160(uint256(bridgePayload.referrerAddr))), referrerAmount);
+		IERC20(localToken).safeTransfer(feeManager.feeCollector(), protocolAmount);
 
 		if (bridgePayload.gasDrop > 0) {
 			uint256 denormalizedGasDrop = deNormalizeAmount(bridgePayload.gasDrop, ETH_DECIMALS);
@@ -119,7 +225,7 @@ contract FastMCTP is ReentrancyGuard {
 		bytes memory cctpSigs,
 		address swapProtocol,
 		bytes memory swapData
-	) external nonReentrant payable {
+	) external nonReentrant payable checkRecipient(cctpMsg) {
 		OrderPayload memory orderPayload = recreateOrderPayload(cctpMsg);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
@@ -138,9 +244,21 @@ contract FastMCTP is ReentrancyGuard {
 			IERC20(localToken).safeTransfer(msg.sender, orderPayload.redeemFee);
 		}
 
+		cctpAmount = cctpAmount - uint256(orderPayload.redeemFee);
+
+		(uint256 referrerAmount, uint256 protocolAmount) = getFeeAmounts(orderPayload, cctpAmount, localToken);
+
+		if (referrerAmount > 0) {
+			IERC20(localToken).safeTransfer(truncateAddress(orderPayload.referrerAddr), referrerAmount);
+		}
+
+		if (protocolAmount > 0) {
+			IERC20(localToken).safeTransfer(feeManager.feeCollector(), protocolAmount);
+		}
+
 		address tokenOut = truncateAddress(orderPayload.tokenOut);
 		require(tokenOut != localToken, "tokenOut cannot be localToken");
-		approveIfNeeded(localToken, swapProtocol, cctpAmount - uint256(orderPayload.redeemFee), false);
+		approveIfNeeded(localToken, swapProtocol, cctpAmount - protocolAmount - referrerAmount, false);
 
 		uint256 amountOut;
 		if (tokenOut == address(0)) {
@@ -165,24 +283,23 @@ contract FastMCTP is ReentrancyGuard {
 			decimals = decimalsOf(tokenOut);
 		}
 
-		uint256 netAmount = makePayments(
+		makePayments(
 			orderPayload,
 			tokenOut,
 			amountOut
 		);
 
-		uint256 promisedAmount = deNormalizeAmount(orderPayload.amountOutMin, decimals);
-		if (netAmount < promisedAmount) {
+		if (amountOut < deNormalizeAmount(orderPayload.amountOutMin, decimals)) {
 			revert InvalidAmountOut();
 		}
 
-		logFulfilled(cctpMsg, netAmount);
+		logFulfilled(cctpMsg, amountOut);
 	}
 
 	function refund(
 		bytes memory cctpMsg,
 		bytes memory cctpSigs
-	) external nonReentrant payable {
+	) external nonReentrant payable checkRecipient(cctpMsg) {
 		(address localToken, uint256 amount) = receiveCctp(cctpMsg, cctpSigs);
 
 		OrderPayload memory orderPayload = recreateOrderPayload(cctpMsg);
@@ -224,32 +341,33 @@ contract FastMCTP is ReentrancyGuard {
 		return (localToken, amount);
 	}
 
+	function sendCctp(
+		address tokenIn,
+		uint256 amountIn,
+		uint32 destDomain,
+		uint256 maxFee,
+		bytes memory hookData
+	) internal {
+		cctpTokenMessengerV2.depositForBurnWithHook(
+			amountIn,
+			destDomain,
+			getMintRecipient(destDomain, tokenIn),
+			tokenIn,
+			getCaller(destDomain),
+			maxFee,
+			MIN_FINALITY_THRESHOLD,
+			hookData
+		);
+	}
+
 	function makePayments(
 		OrderPayload memory orderPayload,
 		address tokenOut,
 		uint256 amount
-	) internal returns (uint256) {
-		address referrerAddr = truncateAddress(orderPayload.referrerAddr);
-		uint256 referrerAmount = 0;
-		if (referrerAddr != address(0) && orderPayload.referrerBps != 0) {
-			referrerAmount = amount * orderPayload.referrerBps / 10000;
-		}
-
-		// TODO: add protocol fee
-		uint256 protocolAmount = 0;
-		// if (orderPayload.protocolBps != 0) {
-		// 	protocolAmount = amount * orderPayload.protocolBps / 10000;
-		// }
-
+	) internal {
 		address destAddr = truncateAddress(orderPayload.destAddr);
 		if (tokenOut == address(0)) {
-			if (referrerAmount > 0) {
-				payEth(referrerAddr, referrerAmount, false);
-			}
-			if (protocolAmount > 0) {
-				payEth(feeManager.feeCollector(), protocolAmount, false);
-			}
-			payEth(destAddr, amount - referrerAmount - protocolAmount, true);
+			payEth(destAddr, amount, true);
 		} else {
 			if (orderPayload.gasDrop > 0) {
 				uint256 gasDrop = deNormalizeAmount(orderPayload.gasDrop, ETH_DECIMALS);
@@ -258,16 +376,8 @@ contract FastMCTP is ReentrancyGuard {
 				}
 				payEth(destAddr, gasDrop, false);
 			}
-			if (referrerAmount > 0) {
-				IERC20(tokenOut).safeTransfer(referrerAddr, referrerAmount);
-			}
-			if (protocolAmount > 0) {
-				IERC20(tokenOut).safeTransfer(feeManager.feeCollector(), protocolAmount);
-			}
-			IERC20(tokenOut).safeTransfer(destAddr, amount - referrerAmount - protocolAmount);
+			IERC20(tokenOut).safeTransfer(destAddr, amount);
 		}
-
-		return amount - referrerAmount - protocolAmount;
 	}
 
 	function logFulfilled(bytes memory cctpMsg, uint256 amount) internal {
@@ -288,6 +398,18 @@ contract FastMCTP is ReentrancyGuard {
 		});
 	}
 
+	function encodeBridgePayload(BridgePayload memory bridgePayload) internal pure returns (bytes memory) {
+		return abi.encodePacked(
+			bridgePayload.payloadType,
+			bridgePayload.destAddr,
+			bridgePayload.gasDrop,
+			bridgePayload.redeemFee,
+			bridgePayload.referrerAddr,
+			bridgePayload.referrerBps,
+			bridgePayload.customPayload
+		);
+	}
+
 	function recreateOrderPayload(
 		bytes memory cctpMsg
 	) internal pure returns (OrderPayload memory) {
@@ -303,6 +425,21 @@ contract FastMCTP is ReentrancyGuard {
 			referrerAddr: cctpMsg.toBytes32(HOOK_DATA_INDEX + 105),
 			referrerBps: cctpMsg.toUint8(HOOK_DATA_INDEX + 137)
 		});
+	}
+
+	function encodeOrderPayload(OrderPayload memory orderPayload) internal pure returns (bytes memory) {
+		return abi.encodePacked(
+			orderPayload.payloadType,
+			orderPayload.destAddr,
+			orderPayload.tokenOut,
+			orderPayload.amountOutMin,
+			orderPayload.gasDrop,
+			orderPayload.redeemFee,
+			orderPayload.refundFee,
+			orderPayload.deadline,
+			orderPayload.referrerAddr,
+			orderPayload.referrerBps
+		);
 	}
 
 	function approveIfNeeded(address tokenAddr, address spender, uint256 amount, bool max) internal {
@@ -326,9 +463,62 @@ contract FastMCTP is ReentrancyGuard {
 		}
 	}
 
+	function getFeeAmounts(OrderPayload memory orderPayload, uint256 cctpAmount, address localToken) internal returns (uint256 referrerAmount, uint256 protocolAmount) {
+		uint8 referrerBps = orderPayload.referrerBps > 100 ? 100 : orderPayload.referrerBps;
+		referrerAmount = cctpAmount * referrerBps / 10000;
+		uint8 protocolBps = feeManager.calcFastMCTPProtocolBps(
+			orderPayload.payloadType,
+			localToken,
+			cctpAmount - uint256(orderPayload.redeemFee),
+			truncateAddress(orderPayload.tokenOut),
+			truncateAddress(orderPayload.referrerAddr),
+			referrerBps
+		);
+		protocolAmount = cctpAmount * protocolBps / 10000;
+
+		return (referrerAmount, protocolAmount);
+	}
+
 	function depositRelayerFee(address relayer, address token, uint256 amount) internal {
 		IERC20(token).transfer(address(feeManager), amount);
 		try feeManager.depositFee(relayer, token, amount) {} catch {}
+	}
+
+	function getMintRecipient(uint32 destDomain, address tokenIn) internal view returns (bytes32) {
+		bytes32 mintRecepient = keyToMintRecipient[keccak256(abi.encodePacked(destDomain, tokenIn))];
+		if (mintRecepient == bytes32(0)) {
+			revert MintRecipientNotSet();
+		}
+		return mintRecepient;
+	}
+
+	function setMintRecipient(uint32 destDomain, address tokenIn, bytes32 mintRecipient) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		bytes32 key = keccak256(abi.encodePacked(destDomain, tokenIn));
+		if (keyToMintRecipient[key] != bytes32(0)) {
+			revert AlreadySet();
+		}
+		keyToMintRecipient[key] = mintRecipient;
+	}
+
+	function getCaller(uint32 destDomain) internal view returns (bytes32 caller) {
+		caller = domainToCaller[destDomain];
+		if (caller == bytes32(0)) {
+			revert CallerNotSet();
+		}
+		return caller;
+	}
+
+	function setDomainCallers(uint32 domain, bytes32 caller) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		if (domainToCaller[domain] != bytes32(0)) {
+			revert AlreadySet();
+		}
+		domainToCaller[domain] = caller;
 	}
 
 	function decimalsOf(address token) internal view returns(uint8) {
@@ -344,9 +534,6 @@ contract FastMCTP is ReentrancyGuard {
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
-		if (bytes12(b) != 0) {
-			revert InvalidAddress();
-		}
 		return address(uint160(uint256(b)));
 	}
 
@@ -369,6 +556,13 @@ contract FastMCTP is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		payEth(to, amount, true);
+	}
+
+	function setPause(bool _pause) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		paused = _pause;
 	}
 
 	function changeGuardian(address newGuardian) public {
