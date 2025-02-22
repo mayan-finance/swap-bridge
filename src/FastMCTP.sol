@@ -201,8 +201,8 @@ contract FastMCTP is ReentrancyGuard {
 			payEth(destAddr, gasDrop, false);
 		}
 
-		IERC20(localToken).safeTransfer(msg.sender, orderPayload.redeemFee);
-		IERC20(localToken).safeTransfer(destAddr, amount - orderPayload.redeemFee);
+		IERC20(localToken).safeTransfer(msg.sender, orderPayload.refundFee);
+		IERC20(localToken).safeTransfer(destAddr, amount - orderPayload.refundFee);
 
 		emit OrderRefunded(cctpMsg.toUint32(CCTPV2_SOURCE_DOMAIN_INDEX), cctpMsg.toBytes32(CCTPV2_NONCE_INDEX), amount);
 	}
