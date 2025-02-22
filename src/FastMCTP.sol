@@ -165,16 +165,16 @@ contract FastMCTP is ReentrancyGuard {
 			decimals = decimalsOf(tokenOut);
 		}
 
-		uint256 promisedAmount = deNormalizeAmount(orderPayload.amountOutMin, decimals);
-		if (amountOut < promisedAmount) {
-			revert InvalidAmountOut();
-		}
-
 		uint256 netAmount = makePayments(
 			orderPayload,
 			tokenOut,
 			amountOut
 		);
+
+		uint256 promisedAmount = deNormalizeAmount(orderPayload.amountOutMin, decimals);
+		if (netAmount < promisedAmount) {
+			revert InvalidAmountOut();
+		}
 
 		logFulfilled(cctpMsg, netAmount);
 	}
