@@ -130,6 +130,7 @@ contract FastMCTP is ReentrancyGuard {
 		}
 
 		// TODO: whitelist swapProtocol
+		// TODO: swap protocol shouldn't be messageTransmitter or tokenMessenger
 			
 		(address localToken, uint256 cctpAmount) = receiveCctp(cctpMsg, cctpSigs);
 
