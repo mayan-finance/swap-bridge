@@ -87,7 +87,8 @@ contract FastMCTP is ReentrancyGuard {
 
 		BridgePayload memory bridgePayload = recreateBridgePayload(cctpMsg);
 
-		if (bridgePayload.payloadType == 2 && msg.sender != truncateAddress(bridgePayload.destAddr)) {
+		address recipient = truncateAddress(bridgePayload.destAddr);
+		if (bridgePayload.payloadType == 2 && msg.sender != recipient) {
 			revert Unauthorized();
 		}
 
@@ -98,7 +99,6 @@ contract FastMCTP is ReentrancyGuard {
 		}
 
 		depositRelayerFee(msg.sender, localToken, uint256(bridgePayload.redeemFee));
-		address recipient = truncateAddress(bridgePayload.destAddr);
 		IERC20(localToken).safeTransfer(recipient, amount - uint256(bridgePayload.redeemFee));
 
 		if (bridgePayload.gasDrop > 0) {
