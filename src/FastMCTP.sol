@@ -9,7 +9,7 @@ import "./libs/BytesLib.sol";
 import "./interfaces/CCTP/v2/ITokenMessengerV2.sol";
 import "./interfaces/IFeeManager.sol";
 
-contract MayanCircle is ReentrancyGuard {
+contract FastMCTP is ReentrancyGuard {
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
 
