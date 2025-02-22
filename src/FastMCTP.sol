@@ -176,7 +176,7 @@ contract FastMCTP is ReentrancyGuard {
 			amountOut
 		);
 
-		emit OrderFulfilled(cctpMsg.toUint32(CCTPV2_SOURCE_DOMAIN_INDEX), cctpMsg.toBytes32(CCTPV2_NONCE_INDEX), amountOut);
+		logFulfilled(cctpMsg, amountOut);
 	}
 
 	function refund(
@@ -263,6 +263,10 @@ contract FastMCTP is ReentrancyGuard {
 			}
 			IERC20(tokenOut).safeTransfer(destAddr, amount - referrerAmount - protocolAmount);
 		}
+	}
+
+	function logFulfilled(bytes memory cctpMsg, uint256 amount) internal {
+		emit OrderFulfilled(cctpMsg.toUint32(CCTPV2_SOURCE_DOMAIN_INDEX), cctpMsg.toBytes32(CCTPV2_NONCE_INDEX), amount);
 	}
 
 	function recreateBridgePayload(
