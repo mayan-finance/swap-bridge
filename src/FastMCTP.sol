@@ -170,13 +170,13 @@ contract FastMCTP is ReentrancyGuard {
 			revert InvalidAmountOut();
 		}
 
-		makePayments(
+		uint256 netAmount = makePayments(
 			orderPayload,
 			tokenOut,
 			amountOut
 		);
 
-		logFulfilled(cctpMsg, amountOut);
+		logFulfilled(cctpMsg, netAmount);
 	}
 
 	function refund(
@@ -225,7 +225,7 @@ contract FastMCTP is ReentrancyGuard {
 		OrderPayload memory orderPayload,
 		address tokenOut,
 		uint256 amount
-	) internal {
+	) internal returns (uint256) {
 		address referrerAddr = truncateAddress(orderPayload.referrerAddr);
 		uint256 referrerAmount = 0;
 		if (referrerAddr != address(0) && orderPayload.referrerBps != 0) {
@@ -263,6 +263,8 @@ contract FastMCTP is ReentrancyGuard {
 			}
 			IERC20(tokenOut).safeTransfer(destAddr, amount - referrerAmount - protocolAmount);
 		}
+
+		return amount - referrerAmount - protocolAmount;
 	}
 
 	function logFulfilled(bytes memory cctpMsg, uint256 amount) internal {
