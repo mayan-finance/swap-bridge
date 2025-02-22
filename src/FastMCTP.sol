@@ -186,6 +186,9 @@ contract FastMCTP is ReentrancyGuard {
 		(address localToken, uint256 amount) = receiveCctp(cctpMsg, cctpSigs);
 
 		OrderPayload memory orderPayload = recreateOrderPayload(cctpMsg);
+		if (orderPayload.payloadType != 3) {
+			revert InvalidPayloadType();
+		}
 
 		if (orderPayload.deadline >= block.timestamp && localToken != truncateAddress(orderPayload.tokenOut)) {
 			revert DeadlineViolation();
