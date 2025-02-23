@@ -19,6 +19,9 @@ contract FastMCTP is ReentrancyGuard {
 	mapping(bytes32 => bytes32) public keyToMintRecipient;
 	mapping(uint32 => bytes32) public domainToCaller;
 
+	mapping(address => bool) public whitelistedSwapProtocols;
+	mapping(address => bool) public whitelistedMsgSenders;
+
 	address public guardian;
 	address public nextGuardian;
 	bool public paused;
@@ -55,6 +58,8 @@ contract FastMCTP is ReentrancyGuard {
 	error CallerNotSet();
 	error InvalidRefundFee();
 	error AlreadySet();
+	error UnauthorizedSwapProtocol();
+	error UnauthorizedMsgSender();
 
 	struct BridgePayload {
 		uint8 payloadType;
@@ -243,10 +248,18 @@ contract FastMCTP is ReentrancyGuard {
 			revert DeadlineViolation();
 		}
 
-		// TODO: whitelist swapProtocol
-		// TODO: swap protocol shouldn't be messageTransmitter or tokenMessenger
-		// TODO: whitelist msg.sender (driver)
-			
+		if (!whitelistedSwapProtocols[swapProtocol]) {
+			revert UnauthorizedSwapProtocol();
+		}
+
+		if (swapProtocol == address(cctpTokenMessengerV2) || swapProtocol == address(cctpTokenMessengerV2.localMessageTransmitter())) {
+			revert UnauthorizedSwapProtocol();
+		}
+
+		if (!whitelistedMsgSenders[msg.sender]) {
+			revert UnauthorizedMsgSender();
+		}
+
 		(address localToken, uint256 cctpAmount) = receiveCctp(cctpMsg, cctpSigs);
 
 		if (orderPayload.redeemFee > 0) {
@@ -528,6 +541,20 @@ contract FastMCTP is ReentrancyGuard {
 			revert AlreadySet();
 		}
 		domainToCaller[domain] = caller;
+	}
+
+	function setWhitelistedSwapProtocols(address protocol, bool isWhitelisted) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		whitelistedSwapProtocols[protocol] = isWhitelisted;
+	}
+
+	function setWhitelistedMsgSenders(address sender, bool isWhitelisted) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		whitelistedMsgSenders[sender] = isWhitelisted;
 	}
 
 	function decimalsOf(address token) internal view returns(uint8) {
