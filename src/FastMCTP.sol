@@ -119,6 +119,10 @@ contract FastMCTP is ReentrancyGuard {
 			revert InvalidRedeemFee();
 		}
 
+		if (payloadType != 1 && payloadType != 2) {
+			revert InvalidPayloadType();
+		}
+
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 		approveIfNeeded(tokenIn, address(cctpTokenMessengerV2), amountIn, true);
 
@@ -155,6 +159,10 @@ contract FastMCTP is ReentrancyGuard {
 
 		if (orderPayload.refundFee + circleMaxFee >= amountIn) {
 			revert InvalidRefundFee();
+		}
+
+		if (orderPayload.payloadType != 3) {
+			revert InvalidPayloadType();
 		}
 
 		require(orderPayload.referrerBps <= 100, "ReferrerBps should be less than 100");
