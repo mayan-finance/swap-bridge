@@ -594,6 +594,17 @@ contract FastMCTP is ReentrancyGuard {
 		payEth(to, amount, true);
 	}
 
+	function rescueRedeem(bytes memory cctpMsg, bytes memory cctpSigs) public {
+		if (truncateAddress(cctpMsg.toBytes32(CCTPV2_MINT_RECIPIENT_INDEX)) == address(this)) {
+			revert Unauthorized();
+		}
+
+		bool success = cctpTokenMessengerV2.localMessageTransmitter().receiveMessage(cctpMsg, cctpSigs);
+		if (!success) {
+			revert CctpReceiveFailed();
+		}
+	}
+
 	function setPause(bool _pause) public {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
