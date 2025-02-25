@@ -221,8 +221,13 @@ contract FastMCTP is ReentrancyGuard {
 
 		depositRelayerFee(msg.sender, localToken, uint256(bridgePayload.redeemFee));
 		IERC20(localToken).safeTransfer(recipient, amount - protocolAmount - referrerAmount);
-		IERC20(localToken).safeTransfer(address(uint160(uint256(bridgePayload.referrerAddr))), referrerAmount);
-		IERC20(localToken).safeTransfer(feeManager.feeCollector(), protocolAmount);
+
+		if (referrerAmount > 0) {
+			try IERC20(localToken).transfer(truncateAddress(bridgePayload.referrerAddr), referrerAmount) {} catch {}
+		}
+		if (protocolAmount > 0) {
+			try IERC20(localToken).transfer(feeManager.feeCollector(), protocolAmount) {} catch {}
+		}
 
 		if (bridgePayload.gasDrop > 0) {
 			uint256 denormalizedGasDrop = deNormalizeAmount(bridgePayload.gasDrop, ETH_DECIMALS);
@@ -271,11 +276,11 @@ contract FastMCTP is ReentrancyGuard {
 		(uint256 referrerAmount, uint256 protocolAmount) = getFeeAmounts(orderPayload, cctpAmount, localToken);
 
 		if (referrerAmount > 0) {
-			IERC20(localToken).safeTransfer(truncateAddress(orderPayload.referrerAddr), referrerAmount);
+			try IERC20(localToken).transfer(truncateAddress(orderPayload.referrerAddr), referrerAmount) {} catch {}
 		}
 
 		if (protocolAmount > 0) {
-			IERC20(localToken).safeTransfer(feeManager.feeCollector(), protocolAmount);
+			try IERC20(localToken).transfer(feeManager.feeCollector(), protocolAmount) {} catch {}
 		}
 
 		address tokenOut = truncateAddress(orderPayload.tokenOut);
