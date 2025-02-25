@@ -237,7 +237,11 @@ contract SwiftSource is ReentrancyGuard {
 		address referrerAddress = address(uint160(uint256(unlockMsg.referrerAddr)));
 
 		uint64 normalizedProtocolFee = order.amountIn * unlockMsg.protocolBps / 10000;
-		address feeCollector = feeManager.feeCollector();
+
+		address feeCollector;
+		try feeManager.feeCollector() returns (address _feeCollector) {
+			feeCollector = _feeCollector;
+		} catch {}
 
 		uint64 netAmount = order.amountIn - normalizedReferrerFee - normalizedProtocolFee;
 
@@ -253,10 +257,10 @@ contract SwiftSource is ReentrancyGuard {
 			}
 		} else {
 			if (normalizedReferrerFee > 0 && referrerAddress != address(0)) {
-				IERC20(tokenIn).safeTransfer(referrerAddress, deNormalizeAmount(normalizedReferrerFee, decimals));
+				try IERC20(tokenIn).transfer(referrerAddress, deNormalizeAmount(normalizedReferrerFee, decimals)) {} catch {}
 			}
 			if (normalizedProtocolFee > 0 && feeCollector != address(0)) {
-				IERC20(tokenIn).safeTransfer(feeCollector, deNormalizeAmount(normalizedProtocolFee, decimals));
+				try IERC20(tokenIn).transfer(feeCollector, deNormalizeAmount(normalizedProtocolFee, decimals)) {} catch {}
 			}
 			if (netAmount > 0) {
 				IERC20(tokenIn).safeTransfer(receiver, deNormalizeAmount(netAmount, decimals));
@@ -311,13 +315,11 @@ contract SwiftSource is ReentrancyGuard {
 		uint256 netAmount = amountIn - cancelFee - refundFee;
 		if (tokenIn == address(0)) {
 			payEth(canceler, cancelFee, false);
-			payEth(address(feeManager), refundFee, false);
-			feeManager.depositFee(msg.sender, address(0), refundFee);
+			depositFee(msg.sender, address(0), refundFee);
 			payEth(trader, netAmount, true);
 		} else {
-			IERC20(tokenIn).safeTransfer(canceler, cancelFee);
-			IERC20(tokenIn).safeTransfer(address(feeManager), refundFee);
-			feeManager.depositFee(msg.sender, tokenIn, refundFee);
+			IERC20(tokenIn).transfer(canceler, cancelFee);
+			depositFee(msg.sender, tokenIn, refundFee);
 			IERC20(tokenIn).safeTransfer(trader, netAmount);
 		}
 
@@ -576,6 +578,15 @@ contract SwiftSource is ReentrancyGuard {
 		if (revertOnFailure) {
 			require(success, 'payment failed');
 		}
+	}
+
+	function depositFee(address owner, address token, uint256 amount) internal {
+		if (token == address(0)) {
+			payEth(address(feeManager), amount, false);
+		} else {
+			try IERC20(token).transfer(address(feeManager), amount) {} catch {}
+		}
+		try feeManager.depositFee(owner, token, amount) {} catch {}
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
