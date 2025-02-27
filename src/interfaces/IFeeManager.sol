@@ -14,6 +14,15 @@ interface IFeeManager {
         uint8 referrerBps
     ) external returns (uint8);
 
+    function calcFastMCTPProtocolBps(
+        uint8 payloadType,
+        address localToken,
+        uint256 recievedAmount,
+        address tokenOut,
+        address referrerAddr,
+        uint8 referrerBps
+    ) external returns (uint8);
+
 	function feeCollector() external view returns (address);
 
     function depositFee(address owner, address token, uint256 amount) payable external;
