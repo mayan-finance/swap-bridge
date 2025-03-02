@@ -84,8 +84,14 @@ contract SwiftSource is ReentrancyGuard {
 		if (emitters[params.destChainId] == 0 || params.destChainId == wormhole.chainId()) {
 			revert InvalidDestChain();
 		}
+
+		Order memory order = orders[orderHash];
 		if (orders[orderHash].destChainId != 0) {
-			revert DuplicateOrder();
+			if (normlizedAmountIn > order.amountIn && order.status == Status.CREATED) {
+				payEth(truncateAddress(params.trader), msg.value, false);
+			} else {
+				revert DuplicateOrder();
+			}
 		}
 
 		orders[orderHash] = Order({
@@ -136,8 +142,14 @@ contract SwiftSource is ReentrancyGuard {
 		if (emitters[params.destChainId] == 0 || params.destChainId == wormhole.chainId()) {
 			revert InvalidDestChain();
 		}
-		if (orders[orderHash].destChainId != 0) {
-			revert DuplicateOrder();
+
+		Order memory order = orders[orderHash];
+		if (order.destChainId != 0) {
+			if (normlizedAmountIn > order.amountIn && order.status == Status.CREATED) {
+				IERC20(tokenIn).transfer(truncateAddress(params.trader), amountIn);
+			} else {
+				revert DuplicateOrder();
+			}
 		}
 
 		orders[orderHash] = Order({
