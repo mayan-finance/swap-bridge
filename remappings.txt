@@ -4,3 +4,4 @@ forge-std/=lib/forge-std/src/
 openzeppelin-contracts/=lib/openzeppelin-contracts/
 openzeppelin/=lib/openzeppelin-contracts/contracts/
 @openzeppelin/=lib/openzeppelin-contracts
+ExcessivelySafeCall/=lib/ExcessivelySafeCall/src/
