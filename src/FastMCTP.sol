@@ -5,16 +5,17 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "ExcessivelySafeCall/ExcessivelySafeCall.sol";
 import "./libs/BytesLib.sol";
 import "./interfaces/CCTP/v2/ITokenMessengerV2.sol";
-import "./interfaces/IFeeManager.sol";
 
 contract FastMCTP is ReentrancyGuard {
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
+	using ExcessivelySafeCall for address;
 
 	ITokenMessengerV2 public immutable cctpTokenMessengerV2;
-	IFeeManager public feeManager;
+	address public feeManager;
 
 	mapping(bytes32 => bytes32) public keyToMintRecipient;
 	mapping(uint32 => bytes32) public domainToCaller;
@@ -38,6 +39,8 @@ contract FastMCTP is ReentrancyGuard {
 	uint256 internal constant HOOK_DATA_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 228;
 
 	uint32 internal constant MIN_FINALITY_THRESHOLD = 0;
+
+	uint256 internal constant GAS_LIMIT_FEE_MANAGER = 10000;
 
 	event OrderFulfilled(uint32 sourceDomain, bytes32 sourceNonce, uint256 amount);
 	event OrderRefunded(uint32 sourceDomain, bytes32 sourceNonce, uint256 amount);
@@ -103,7 +106,7 @@ contract FastMCTP is ReentrancyGuard {
 		address _feeManager
 	) {
 		cctpTokenMessengerV2 = ITokenMessengerV2(_cctpTokenMessengerV2);
-		feeManager = IFeeManager(_feeManager);
+		feeManager = _feeManager;
 		guardian = msg.sender;
 	}
 
@@ -226,7 +229,7 @@ contract FastMCTP is ReentrancyGuard {
 			try IERC20(localToken).transfer(truncateAddress(bridgePayload.referrerAddr), referrerAmount) {} catch {}
 		}
 		if (protocolAmount > 0) {
-			try IERC20(localToken).transfer(feeManager.feeCollector(), protocolAmount) {} catch {}
+			try IERC20(localToken).transfer(safeGetFeeCollector(), protocolAmount) {} catch {}
 		}
 
 		if (bridgePayload.gasDrop > 0) {
@@ -280,7 +283,7 @@ contract FastMCTP is ReentrancyGuard {
 		}
 
 		if (protocolAmount > 0) {
-			try IERC20(localToken).transfer(feeManager.feeCollector(), protocolAmount) {} catch {}
+			try IERC20(localToken).transfer(safeGetFeeCollector(), protocolAmount) {} catch {}
 		}
 
 		address tokenOut = truncateAddress(orderPayload.tokenOut);
@@ -514,25 +517,44 @@ contract FastMCTP is ReentrancyGuard {
         address referrerAddr,
         uint8 referrerBps
     ) internal returns (uint8 protocolBps) {
-        try
-            feeManager.calcFastMCTPProtocolBps(
-                payloadType,
-                localToken,
-                cctpAmount,
-                tokenOut,
-                referrerAddr,
-                referrerBps
-            )
-        returns (uint8 _protocolBps) {
-            protocolBps = _protocolBps;
-        } catch {
-            protocolBps = 0;
-        }
+		(, bytes memory returnData) = address(feeManager)
+            .excessivelySafeCall(
+                GAS_LIMIT_FEE_MANAGER, // _gas
+                0, // _value
+                32, // _maxCopy
+                abi.encodeWithSignature(
+                    "calcFastMCTPProtocolBps(uint8,address,uint256,address,address,uint8)",
+                    payloadType,
+                    localToken,
+                    cctpAmount,
+                    tokenOut,
+                    referrerAddr,
+                    referrerBps
+                )
+            );
+        protocolBps = abi.decode(returnData, (uint8));
+    }
+
+    function safeGetFeeCollector() internal returns (address feeCollector) {
+        (, bytes memory returnData) = address(feeManager)
+			.excessivelySafeCall(
+				GAS_LIMIT_FEE_MANAGER, // _gas
+				0, // _value
+				32, // _maxCopy
+				abi.encodeWithSignature("feeCollector()")
+			);
+        feeCollector = abi.decode(returnData, (address));
     }
 
 	function depositRelayerFee(address relayer, address token, uint256 amount) internal {
 		IERC20(token).transfer(address(feeManager), amount);
-		try feeManager.depositFee(relayer, token, amount) {} catch {}
+		address(feeManager)
+			.excessivelySafeCall(
+				GAS_LIMIT_FEE_MANAGER, // _gas
+				0, // _value
+				32, // _maxCopy
+				abi.encodeWithSignature("depositFee(address,address,uint256)", relayer, token, amount)
+			);
 	}
 
 	function getMintRecipient(uint32 destDomain, address tokenIn) internal view returns (bytes32) {
@@ -606,7 +628,7 @@ contract FastMCTP is ReentrancyGuard {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
-		feeManager = IFeeManager(_feeManager);
+		feeManager = _feeManager;
 	}	
 
 	function rescueToken(address token, uint256 amount, address to) public {
