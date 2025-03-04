@@ -1,0 +1,45 @@
+{
+    "files.autoSave": "afterDelay",
+    "workbench.colorTheme": "Default Dark+",
+    "solidity.remappingsUnix": [
+        "@openzeppelin/=lib/openzeppelin-contracts",
+        "ds-test/=lib/openzeppelin-contracts/lib/forge-std/lib/ds-test/src/",
+        "erc4626-tests/=lib/openzeppelin-contracts/lib/erc4626-tests/",
+        "forge-std/=lib/forge-std/src/",
+        "openzeppelin/=lib/openzeppelin-contracts/contracts/",
+        "openzeppelin-contracts/=lib/openzeppelin-contracts/"
+    ],
+    "solidity.remappings": [
+        "@openzeppelin/=lib/openzeppelin-contracts",
+        "ds-test/=lib/openzeppelin-contracts/lib/forge-std/lib/ds-test/src/",
+        "erc4626-tests/=lib/openzeppelin-contracts/lib/erc4626-tests/",
+        "forge-std/=lib/forge-std/src/",
+        "openzeppelin/=lib/openzeppelin-contracts/contracts/",
+        "openzeppelin-contracts/=lib/openzeppelin-contracts/"
+    ],
+    "solidity.solhintRules": {
+        "private-vars-leading-underscore": [
+            "off",
+            {
+                "strict": false
+            }
+        ],
+        "immutable-vars-naming": [
+            "off",
+            {
+                "immutablesAsConstants": true
+            }
+        ],
+        "no-global-import": "off",
+        "reason-string": "off",
+        "custom-errors": "off",
+        "quotes": [
+            "off",
+            {
+                "avoidEscape": true
+            }
+        ],
+        "no-empty-blocks": "off",
+        "no-unused-vars": "off"
+    },
+}
