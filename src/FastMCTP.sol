@@ -207,7 +207,7 @@ contract FastMCTP is ReentrancyGuard {
 		amount = amount - uint256(bridgePayload.redeemFee);
 
 		uint8 referrerBps = bridgePayload.referrerBps > 100 ? 100 : bridgePayload.referrerBps;
-		uint8 protocolBps = feeManager.calcFastMCTPProtocolBps(
+		uint8 protocolBps = safeCalcFastMCTPProtocolBps(
 			bridgePayload.payloadType,
 			localToken,
 			amount,
@@ -493,7 +493,7 @@ contract FastMCTP is ReentrancyGuard {
 	function getFeeAmounts(OrderPayload memory orderPayload, uint256 cctpAmount, address localToken) internal returns (uint256 referrerAmount, uint256 protocolAmount) {
 		uint8 referrerBps = orderPayload.referrerBps > 100 ? 100 : orderPayload.referrerBps;
 		referrerAmount = cctpAmount * referrerBps / 10000;
-		uint8 protocolBps = feeManager.calcFastMCTPProtocolBps(
+		uint8 protocolBps = safeCalcFastMCTPProtocolBps(
 			orderPayload.payloadType,
 			localToken,
 			cctpAmount - uint256(orderPayload.redeemFee),
@@ -505,6 +505,30 @@ contract FastMCTP is ReentrancyGuard {
 
 		return (referrerAmount, protocolAmount);
 	}
+
+    function safeCalcFastMCTPProtocolBps(
+        uint8 payloadType,
+        address localToken,
+        uint256 cctpAmount,
+        address tokenOut,
+        address referrerAddr,
+        uint8 referrerBps
+    ) internal returns (uint8 protocolBps) {
+        try
+            feeManager.calcFastMCTPProtocolBps(
+                payloadType,
+                localToken,
+                cctpAmount,
+                tokenOut,
+                referrerAddr,
+                referrerBps
+            )
+        returns (uint8 _protocolBps) {
+            protocolBps = _protocolBps;
+        } catch {
+            protocolBps = 0;
+        }
+    }
 
 	function depositRelayerFee(address relayer, address token, uint256 amount) internal {
 		IERC20(token).transfer(address(feeManager), amount);
