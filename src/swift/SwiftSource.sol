@@ -594,11 +594,11 @@ contract SwiftSource is ReentrancyGuard {
 
 	function depositFee(address owner, address token, uint256 amount) internal {
 		if (token == address(0)) {
-			payEth(address(feeManager), amount, false);
+			try feeManager.depositFee {value: amount} (owner, token, amount) {} catch {}
 		} else {
 			try IERC20(token).transfer(address(feeManager), amount) {} catch {}
+			try feeManager.depositFee(owner, token, amount) {} catch {}
 		}
-		try feeManager.depositFee(owner, token, amount) {} catch {}
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
