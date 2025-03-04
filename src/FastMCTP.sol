@@ -119,7 +119,7 @@ contract FastMCTP is ReentrancyGuard {
 		uint8 referrerBps,
 		uint8 payloadType,
 		bytes memory customPayload
-	) external payable nonReentrant whenNotPaused {
+	) external nonReentrant whenNotPaused {
 		if (redeemFee + circleMaxFee >= amountIn) {
 			revert InvalidRedeemFee();
 		}
@@ -157,7 +157,7 @@ contract FastMCTP is ReentrancyGuard {
 		uint256 circleMaxFee,
 		uint32 destDomain,
 		OrderPayload memory orderPayload
-	) external payable nonReentrant whenNotPaused {
+	) external nonReentrant whenNotPaused {
 		if (orderPayload.redeemFee + circleMaxFee >= amountIn) {
 			revert InvalidRedeemFee();
 		}
