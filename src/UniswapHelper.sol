@@ -53,21 +53,27 @@ contract UniswapHelper {
 
     function maxApproveIfNeeded(
         address tokenAddr,
-        address permit2,
+        address permit2Addr,
         address swapProtocol,
         uint256 amount
     ) internal {
         IERC20 token = IERC20(tokenAddr);
-        uint256 currentAllowance = token.allowance(address(this), permit2);
+        uint256 tokenAllowance = token.allowance(address(this), permit2Addr);
 
-        if (currentAllowance < amount) {
-            token.safeApprove(permit2, 0);
-            token.safeApprove(permit2, type(uint256).max);
+        if (tokenAllowance < amount) {
+            token.safeApprove(permit2Addr, 0);
+            token.safeApprove(permit2Addr, type(uint256).max);
+        }
 
-            IPermit2(permit2).approve(
+        IPermit2 permit2 = IPermit2(permit2Addr);
+        (uint160 permitAllowance, uint48 expiration, uint48 nonce) = permit2
+            .allowance(address(this), tokenAddr, swapProtocol);
+
+        if (block.timestamp > expiration || permitAllowance < amount) {
+            permit2.approve(
                 tokenAddr,
                 swapProtocol,
-                uint160(amount),
+                type(uint160).max,
                 type(uint48).max
             );
         }
