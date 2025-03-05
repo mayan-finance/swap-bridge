@@ -504,6 +504,7 @@ contract FastMCTP is ReentrancyGuard {
 			truncateAddress(orderPayload.referrerAddr),
 			referrerBps
 		);
+		protocolBps = protocolBps > 100 ? 100 : protocolBps;
 		protocolAmount = cctpAmount * protocolBps / 10000;
 
 		return (referrerAmount, protocolAmount);
