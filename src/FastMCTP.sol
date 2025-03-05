@@ -561,7 +561,8 @@ contract FastMCTP is ReentrancyGuard {
     }
 
 	function depositRelayerFee(address relayer, address token, uint256 amount) internal {
-		IERC20(token).transfer(address(feeManager), amount);
+		try IERC20(token).transfer(address(feeManager), amount) {} catch {}
+
 		address(feeManager)
 			.excessivelySafeCall(
 				GAS_LIMIT_FEE_MANAGER, // _gas
