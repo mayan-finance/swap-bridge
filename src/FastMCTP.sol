@@ -516,7 +516,7 @@ contract FastMCTP is ReentrancyGuard {
         address tokenOut,
         address referrerAddr,
         uint8 referrerBps
-    ) internal returns (uint8 protocolBps) {
+    ) internal returns (uint8) {
 		(, bytes memory returnData) = address(feeManager)
             .excessivelySafeCall(
                 GAS_LIMIT_FEE_MANAGER, // _gas
@@ -532,10 +532,17 @@ contract FastMCTP is ReentrancyGuard {
                     referrerBps
                 )
             );
-        protocolBps = abi.decode(returnData, (uint8));
+		
+		uint256 protocolBps;
+		if (returnData.length <= 32) {
+			protocolBps = 0;
+		} else {
+			protocolBps = abi.decode(returnData, (uint256));
+		}
+		return uint8(protocolBps);
     }
 
-    function safeGetFeeCollector() internal returns (address feeCollector) {
+    function safeGetFeeCollector() internal returns (address) {
         (, bytes memory returnData) = address(feeManager)
 			.excessivelySafeCall(
 				GAS_LIMIT_FEE_MANAGER, // _gas
@@ -543,7 +550,14 @@ contract FastMCTP is ReentrancyGuard {
 				32, // _maxCopy
 				abi.encodeWithSignature("feeCollector()")
 			);
-        feeCollector = abi.decode(returnData, (address));
+
+		uint256 feeCollector;
+		if (returnData.length <= 32) {
+			feeCollector = 0;
+		} else {
+			feeCollector = abi.decode(returnData, (uint256));
+		}
+		return address(uint160(feeCollector));
     }
 
 	function depositRelayerFee(address relayer, address token, uint256 amount) internal {
