@@ -20,6 +20,7 @@ error InvalidWormholeFee();
 error InvalidAuctionMode();
 error InvalidEvmAddr();
 error InvalidPayload();
+error InvalidPayloadLength();
 error EmitterAddressExists();
 error InvalidBatchIndex();
 error InvalidAuctionConfig();

@@ -368,9 +368,9 @@ contract SwiftSource is ReentrancyGuard {
 		if (action != uint8(Action.BATCH_UNLOCK)) {
 			revert InvalidAction();
 		}
+		uint16 count = vm.payload.toUint16(1);
 
-		// skip action (1 byte)
-		processUnlocks(vm.payload, 1, vm.emitterChainId, vm.emitterAddress, indexes);
+		processUnlocks(vm.payload, count, vm.emitterChainId, vm.emitterAddress, indexes);
 	}
 	
 	function unlockCompressedBatch(bytes memory encodedVm, bytes memory encodedPayload, uint16[] memory indexes) nonReentrant public {
@@ -379,24 +379,25 @@ contract SwiftSource is ReentrancyGuard {
 		require(valid, reason);
 
 		uint8 action = vm.payload.toUint8(0);
-		if (action != uint8(Action.BATCH_UNLOCK)) {
+		if (action != uint8(Action.COMPRESSED_UNLOCK)) {
 			revert InvalidAction();
 		}
-		bytes32 computedHash = keccak256(encodedPayload);
-		bytes32 msgHash = vm.payload.toBytes32(1);
 
+		uint16 count = vm.payload.toUint16(1);
+		if (count * UNLOCK_MSG_SIZE != encodedPayload.length) {
+			revert InvalidPayloadLength();
+		}
+
+		bytes32 computedHash = keccak256(encodedPayload);
+		bytes32 msgHash = vm.payload.toBytes32(3);
 		if (computedHash != msgHash) {
 			revert InvalidPayload();
 		}
 
-		// skip action and hash (33 bytes)
-		processUnlocks(encodedPayload, 33, vm.emitterChainId, vm.emitterAddress, indexes);
+		processUnlocks(encodedPayload, count, vm.emitterChainId, vm.emitterAddress, indexes);
 	}
 
-	function processUnlocks(bytes memory payload, uint offset, uint16 emitterChainId, bytes32 emitterAddress, uint16[] memory indexes) internal {
-		uint16 count = payload.toUint16(offset);
-		offset += 2;
-
+	function processUnlocks(bytes memory payload, uint16 count, uint16 emitterChainId, bytes32 emitterAddress, uint16[] memory indexes) internal {
 		// If indexes array is empty, create a default array to iterate over all indices
 		if (indexes.length == 0) {
 			indexes = new uint16[](count);
@@ -411,7 +412,7 @@ contract SwiftSource is ReentrancyGuard {
 				revert InvalidBatchIndex();
 			}
 
-			uint currentOffset = offset + index * UNLOCK_MSG_SIZE;
+			uint currentOffset = index * UNLOCK_MSG_SIZE;
 
 			UnlockMsg memory unlockMsg = UnlockMsg({
 				action: uint8(Action.UNLOCK),
