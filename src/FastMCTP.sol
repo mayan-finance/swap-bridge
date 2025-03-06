@@ -38,8 +38,6 @@ contract FastMCTP is ReentrancyGuard {
 	uint256 internal constant CCTPV2_MINT_RECIPIENT_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 36;
 	uint256 internal constant HOOK_DATA_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 228;
 
-	uint32 internal constant MIN_FINALITY_THRESHOLD = 0;
-
 	uint256 internal constant GAS_LIMIT_FEE_MANAGER = 10000;
 
 	event OrderFulfilled(uint32 sourceDomain, bytes32 sourceNonce, uint256 amount);
@@ -121,6 +119,7 @@ contract FastMCTP is ReentrancyGuard {
 		bytes32 referrerAddress,
 		uint8 referrerBps,
 		uint8 payloadType,
+		uint32 minFinalityThreshold,
 		bytes memory customPayload
 	) external nonReentrant whenNotPaused {
 		if (redeemFee + circleMaxFee >= amountIn) {
@@ -151,7 +150,7 @@ contract FastMCTP is ReentrancyGuard {
 			customPayload: customPayloadHash
 		});
 
-		sendCctp(tokenIn, amountIn, destDomain, circleMaxFee, encodeBridgePayload(bridgePayload));
+		sendCctp(tokenIn, amountIn, destDomain, circleMaxFee, minFinalityThreshold, encodeBridgePayload(bridgePayload));
 	}
 
 	function createOrder(
@@ -159,6 +158,7 @@ contract FastMCTP is ReentrancyGuard {
 		uint256 amountIn,
 		uint256 circleMaxFee,
 		uint32 destDomain,
+		uint32 minFinalityThreshold,
 		OrderPayload memory orderPayload
 	) external nonReentrant whenNotPaused {
 		if (orderPayload.redeemFee + circleMaxFee >= amountIn) {
@@ -182,7 +182,7 @@ contract FastMCTP is ReentrancyGuard {
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 		approveIfNeeded(tokenIn, address(cctpTokenMessengerV2), amountIn, true);
 
-		sendCctp(tokenIn, amountIn, destDomain, circleMaxFee, encodeOrderPayload(orderPayload));
+		sendCctp(tokenIn, amountIn, destDomain, circleMaxFee, minFinalityThreshold, encodeOrderPayload(orderPayload));
 	}
 
 	function redeem(
@@ -376,6 +376,7 @@ contract FastMCTP is ReentrancyGuard {
 		uint256 amountIn,
 		uint32 destDomain,
 		uint256 maxFee,
+		uint32 minFinalityThreshold,
 		bytes memory hookData
 	) internal {
 		cctpTokenMessengerV2.depositForBurnWithHook(
@@ -385,7 +386,7 @@ contract FastMCTP is ReentrancyGuard {
 			tokenIn,
 			getCaller(destDomain),
 			maxFee,
-			MIN_FINALITY_THRESHOLD,
+			minFinalityThreshold,
 			hookData
 		);
 	}
