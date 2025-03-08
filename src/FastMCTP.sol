@@ -38,7 +38,7 @@ contract FastMCTP is ReentrancyGuard {
 	uint256 internal constant CCTPV2_MINT_RECIPIENT_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 36;
 	uint256 internal constant HOOK_DATA_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 228;
 
-	uint256 internal constant GAS_LIMIT_FEE_MANAGER = 10000;
+	uint256 internal constant GAS_LIMIT_FEE_MANAGER = 1000000;
 
 	event OrderFulfilled(uint32 sourceDomain, bytes32 sourceNonce, uint256 amount);
 	event OrderRefunded(uint32 sourceDomain, bytes32 sourceNonce, uint256 amount);
