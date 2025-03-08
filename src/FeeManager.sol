@@ -35,6 +35,21 @@ contract FeeManager is IFeeManager {
 		return baseBps;
 	}
 
+	function calcFastMCTPProtocolBps(
+        uint8 payloadType,
+        address localToken,
+        uint256 recievedAmount,
+        address tokenOut,
+        address referrerAddr,
+        uint8 referrerBps
+    ) external returns (uint8) {
+		if (payloadType == 3) {
+			return 3;
+		} else {
+			return 1;
+		}
+	}
+
 	function depositFee(address owner, address token, uint256 amount) payable external override {
 		require(msg.sender == protocol, 'only protocol');
 		if (token == address(0)) {
