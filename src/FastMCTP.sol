@@ -500,7 +500,7 @@ contract FastMCTP is ReentrancyGuard {
 		uint8 protocolBps = safeCalcFastMCTPProtocolBps(
 			orderPayload.payloadType,
 			localToken,
-			cctpAmount - uint256(orderPayload.redeemFee),
+			cctpAmount,
 			truncateAddress(orderPayload.tokenOut),
 			truncateAddress(orderPayload.referrerAddr),
 			referrerBps
