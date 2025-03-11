@@ -536,7 +536,7 @@ contract FastMCTP is ReentrancyGuard {
             );
 		
 		uint256 protocolBps;
-		if (returnData.length <= 32) {
+		if (returnData.length < 32) {
 			protocolBps = 0;
 		} else {
 			protocolBps = abi.decode(returnData, (uint256));
@@ -554,7 +554,7 @@ contract FastMCTP is ReentrancyGuard {
 			);
 
 		uint256 feeCollector;
-		if (returnData.length <= 32) {
+		if (returnData.length < 32) {
 			feeCollector = 0;
 		} else {
 			feeCollector = abi.decode(returnData, (uint256));
