@@ -52,7 +52,7 @@ struct Key {
 	uint64 cancelFee;
 	uint64 refundFee;
 	uint64 deadline;
-	uint64 penaltyPeriod;
+	uint16 penaltyPeriod;
 	bytes32 referrerAddr;
 	uint8 referrerBps;
 	uint8 protocolBps;

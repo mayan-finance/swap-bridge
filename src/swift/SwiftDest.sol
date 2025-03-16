@@ -87,7 +87,7 @@ contract SwiftDest is ReentrancyGuard {
 			revert Unauthorized();
 		}
 
-		if (block.timestamp > params.deadline) {
+		if (block.timestamp >= params.deadline) {
 			revert DeadlineViolation();
 		}
 
