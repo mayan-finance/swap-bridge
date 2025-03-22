@@ -9,18 +9,89 @@ import "./interfaces/CCTP/v2/ITokenMessengerV2.sol";
 import "./interfaces/CCTP/ITokenMessenger.sol";
 import "./interfaces/IFeeManager.sol";
 
+interface IMayanCircle {
+    struct OrderParams {
+		address tokenIn;
+		uint256 amountIn;
+		uint64 gasDrop;
+		bytes32 destAddr;
+		uint16 destChain;
+		bytes32 tokenOut;
+		uint64 minAmountOut;
+		uint64 deadline;
+		uint64 redeemFee;
+		bytes32 referrerAddr;
+		uint8 referrerBps;
+	}
+
+    function bridgeWithFee(
+		address tokenIn,
+		uint256 amountIn,
+		uint64 redeemFee,
+		uint64 gasDrop,
+		bytes32 destAddr,
+		uint32 destDomain,
+		uint8 payloadType,
+		bytes memory customPayload
+	) external payable returns (uint64 sequence);
+
+    function createOrder(
+		OrderParams memory params
+	) external payable returns (uint64 sequence);
+}
+
+interface IFastMCTP {
+    struct OrderPayload {
+		uint8 payloadType;
+		bytes32 destAddr;
+		bytes32 tokenOut;
+		uint64 amountOutMin;
+		uint64 gasDrop;
+		uint64 redeemFee;
+		uint64 refundFee;
+		uint64 deadline;
+		bytes32 referrerAddr;
+		uint8 referrerBps;
+	}
+
+    function bridge(
+		address tokenIn,
+		uint256 amountIn,
+		uint64 redeemFee,
+		uint256 circleMaxFee,
+		uint64 gasDrop,
+		bytes32 destAddr,
+		uint32 destDomain,
+		bytes32 referrerAddress,
+		uint8 referrerBps,
+		uint8 payloadType,
+		uint32 minFinalityThreshold,
+		bytes memory customPayload
+	) external;
+
+    function createOrder(
+		address tokenIn,
+		uint256 amountIn,
+		uint256 circleMaxFee,
+		uint32 destDomain,
+		uint32 minFinalityThreshold,
+		OrderPayload memory orderPayload
+	) external;
+
+    function redeem(
+		bytes memory cctpMsg,
+		bytes memory cctpSigs
+	) external payable;
+
+    function cctpTokenMessengerV2() external view returns (ITokenMessengerV2);
+}
+
 contract ZeroXHub is ReentrancyGuard {
     using SafeERC20 for IERC20;
     using BytesLib for bytes;
 
-    // CCTP Interfaces
-    ITokenMessengerV2 public immutable fastMCTPTokenMessenger;
-    ITokenMessenger public immutable mayanTokenMessenger;
-    address public feeManager;
-    address public mayanForwarder; // Address of the MayanForwarder contract
-
-    // Supported stablecoins (typically USDC/EUROC)
-    mapping(address => bool) public supportedTokens;
+    IFastMCTP public fastMCTP;
+    IMayanCircle public mayanCircle;
 
     // Protocol mappings
     mapping(uint32 => bool) public isFastMCTPDomain;
@@ -35,10 +106,8 @@ contract ZeroXHub is ReentrancyGuard {
     // Constants and state variables
     address public guardian;
     address public nextGuardian;
-    bool public paused;
 
     // Errors
-    error Paused();
     error Unauthorized();
     error UnsupportedToken();
     error UnsupportedDomain();
@@ -52,17 +121,15 @@ contract ZeroXHub is ReentrancyGuard {
     error InvalidPayloadType();
     error UnsupportedHubPayloadType();
     error InsufficientReceivedAmount();
+    error EthTransferFailed();
+    error UnsupportedRoute();
 
-    // Empty permit params struct for forwarder calls
-    struct PermitParams {
-        uint256 value;
-        uint256 deadline;
-        uint8 v;
-        bytes32 r;
-        bytes32 s;
+    enum HubRoute {
+        None,
+        FastMCTP,
+        MayanCircle
     }
 
-    // Hub payload structs
     struct HubPayloadBridge {
         uint8 hubPayloadType;
         uint64 hubRelayerFee;
@@ -71,7 +138,7 @@ contract ZeroXHub is ReentrancyGuard {
         uint64 gasDrop;
         uint64 redeemFee;
         uint8 bridgePayloadType;
-        bytes32 referrerAddr;
+        HubRoute route;
         bytes customPayload;
     }
 
@@ -86,6 +153,7 @@ contract ZeroXHub is ReentrancyGuard {
         uint64 redeemFee;
         bytes32 referrerAddr;
         uint8 referrerBps;
+        HubRoute route;
     }
 
     // Constants for hub payload types
@@ -95,68 +163,48 @@ contract ZeroXHub is ReentrancyGuard {
     // Constants for hook data parsing
     uint256 internal constant HOOK_DATA_INDEX = 148 + 228; // CCTPV2_MESSAGE_BODY_INDEX + 228 (from FastMCTP)
 
-    modifier whenNotPaused() {
-        if (paused) {
-            revert Paused();
-        }
-        _;
-    }
-
     constructor(
-        address _fastMCTPTokenMessenger,
-        address _mayanTokenMessenger,
-        address _feeManager,
-        address _mayanForwarder
+        address _fastMCTP,
+        address _mayanCircle
     ) {
-        fastMCTPTokenMessenger = ITokenMessengerV2(_fastMCTPTokenMessenger);
-        mayanTokenMessenger = ITokenMessenger(_mayanTokenMessenger);
-        feeManager = _feeManager;
-        mayanForwarder = _mayanForwarder;
+        fastMCTP = IFastMCTP(_fastMCTP);
+        mayanCircle = IMayanCircle(_mayanCircle);
         guardian = msg.sender;
     }
 
     function processFastMCTPIncoming(
+        bytes memory payload,
         bytes memory cctpMsg,
         bytes memory cctpSigs
-    ) external nonReentrant whenNotPaused {
+    ) external nonReentrant {
         (address localToken, uint256 amount) = receiveFastMCTPMessage(
             cctpMsg,
             cctpSigs
         );
 
-        if (!supportedTokens[localToken]) {
-            revert UnsupportedToken();
-        }
+        bytes32 payloadHash = cctpMsg.toBytes32(HOOK_DATA_INDEX);
+        require(payloadHash == keccak256(payload), "Invalid payload hash");
 
-        bytes memory hookData = extractHookData(cctpMsg);
-        uint8 hubPayloadType = uint8(hookData[0]);
+        uint8 hubPayloadType = uint8(payload[0]);
 
         if (hubPayloadType == HUB_PAYLOAD_TYPE_BRIDGE) {
             HubPayloadBridge memory bridgePayload = decodeHubPayloadBridge(
-                hookData
+                payload
             );
 
-            if (amount <= bridgePayload.hubRelayerFee + bridgePayload.redeemFee) {
-                revert InsufficientReceivedAmount();
-            }
-
-            if (!isMayanCircleDomain[uint32(bridgePayload.destChain)]) {
-                revert UnsupportedDomain();
-            }
+            // if (!isMayanCircleDomain[uint32(bridgePayload.destChain)]) {
+            //     revert UnsupportedDomain();
+            // }
 
             processBridgePayload(localToken, amount, bridgePayload);
         } else if (hubPayloadType == HUB_PAYLOAD_TYPE_ORDER) {
             HubPayloadOrder memory orderPayload = decodeHubPayloadOrder(
-                hookData
+                payload
             );
 
-            if (amount <= orderPayload.hubRelayerFee + orderPayload.redeemFee) {
-                revert InsufficientReceivedAmount();
-            }
-
-            if (!isMayanCircleDomain[uint32(orderPayload.destChain)]) {
-                revert UnsupportedDomain();
-            }
+            //     if (!isMayanCircleDomain[uint32(orderPayload.destChain)]) {
+            //         revert UnsupportedDomain();
+            // }
 
             processOrderPayload(localToken, amount, orderPayload);
         } else {
@@ -164,127 +212,82 @@ contract ZeroXHub is ReentrancyGuard {
         }
     }
 
-    function processMayanCircleIncoming(
-        bytes memory cctpMsg,
-        bytes memory cctpSigs
-    ) external nonReentrant whenNotPaused {
-        (address localToken, uint256 amount) = receiveMayanCircleMessage(
-            cctpMsg,
-            cctpSigs
-        );
+    // function processMayanCircleIncoming(
+    //     bytes memory cctpMsg,
+    //     bytes memory cctpSigs
+    // ) external nonReentrant {
+    //     (address localToken, uint256 amount) = receiveMayanCircleMessage(
+    //         cctpMsg,
+    //         cctpSigs
+    //     );
 
-        if (!supportedTokens[localToken]) {
-            revert UnsupportedToken();
-        }
+    //     bytes memory messageBody = extractMessageBody(cctpMsg);
+    //     uint8 hubPayloadType = uint8(messageBody[0]);
 
-        bytes memory messageBody = extractMessageBody(cctpMsg);
-        uint8 hubPayloadType = uint8(messageBody[0]);
+    //     if (hubPayloadType == HUB_PAYLOAD_TYPE_BRIDGE) {
+    //         HubPayloadBridge memory bridgePayload = decodeHubPayloadBridge(
+    //             messageBody
+    //         );
 
-        if (hubPayloadType == HUB_PAYLOAD_TYPE_BRIDGE) {
-            HubPayloadBridge memory bridgePayload = decodeHubPayloadBridge(
-                messageBody
-            );
+    //         if (amount <= bridgePayload.hubRelayerFee + bridgePayload.redeemFee) {
+    //             revert InsufficientReceivedAmount();
+    //         }
 
-            if (amount <= bridgePayload.hubRelayerFee + bridgePayload.redeemFee) {
-                revert InsufficientReceivedAmount();
-            }
+    //         if (!isFastMCTPDomain[uint32(bridgePayload.destChain)]) {
+    //             revert UnsupportedDomain();
+    //         }
 
-            if (!isFastMCTPDomain[uint32(bridgePayload.destChain)]) {
-                revert UnsupportedDomain();
-            }
+    //         processBridgePayload(localToken, amount, bridgePayload);
+    //     } else if (hubPayloadType == HUB_PAYLOAD_TYPE_ORDER) {
+    //         HubPayloadOrder memory orderPayload = decodeHubPayloadOrder(
+    //             messageBody
+    //         );
 
-            processBridgePayload(localToken, amount, bridgePayload);
-        } else if (hubPayloadType == HUB_PAYLOAD_TYPE_ORDER) {
-            HubPayloadOrder memory orderPayload = decodeHubPayloadOrder(
-                messageBody
-            );
+    //         if (amount <= orderPayload.hubRelayerFee + orderPayload.redeemFee) {
+    //             revert InsufficientReceivedAmount();
+    //         }
 
-            if (amount <= orderPayload.hubRelayerFee + orderPayload.redeemFee) {
-                revert InsufficientReceivedAmount();
-            }
+    //         if (!isFastMCTPDomain[uint32(orderPayload.destChain)]) {
+    //             revert UnsupportedDomain();
+    //         }
 
-            if (!isFastMCTPDomain[uint32(orderPayload.destChain)]) {
-                revert UnsupportedDomain();
-            }
-
-            processOrderPayload(localToken, amount, orderPayload);
-        } else {
-            revert UnsupportedHubPayloadType();
-        }
-    }
+    //         processOrderPayload(localToken, amount, orderPayload);
+    //     } else {
+    //         revert UnsupportedHubPayloadType();
+    //     }
+    // }
 
     function processBridgePayload(
         address localToken,
         uint256 amount,
         HubPayloadBridge memory bridgePayload
     ) internal {
-        approveIfNeeded(localToken, mayanForwarder, amount, false);
-
-        PermitParams memory emptyPermit = PermitParams({
-            value: 0,
-            deadline: 0,
-            v: 0,
-            r: bytes32(0),
-            s: bytes32(0)
-        });
-
-        address protocol;
-        bytes memory protocolData;
-
-        if (isMayanCircleDomain[uint32(bridgePayload.destChain)]) {
-            // TODO: Call MayanCircle interface
-            // protocol = address(mayanTokenMessenger);
-
-            // protocolData = abi.encodeWithSelector(
-            //     ITokenMessenger.depositForBurnWithCaller.selector,
-            //     amount - bridgePayload.hubRelayerFee,
-            //     uint32(bridgePayload.destChain),
-            //     getMayanCircleMintRecipient(
-            //         uint32(bridgePayload.destChain),
-            //         localToken
-            //     ),
+        if (bridgePayload.route == HubRoute.FastMCTP) {
+            // fastMCTP.bridge(
             //     localToken,
-            //     getMayanCircleCaller(uint32(bridgePayload.destChain))
+            //     amount,
+            //     bridgePayload.redeemFee,
+            //     bridgePayload.hubRelayerFee,
+            //     bridgePayload.gasDrop,
+            //     bridgePayload.destAddress,
+            //     bridgePayload.destChain,
+            //     bridgePayload.bridgePayloadType,
+            //     bridgePayload.customPayload
             // );
-        } else if (isFastMCTPDomain[uint32(bridgePayload.destChain)]) {
-            // TODO: Call FastMCTP interface
-            // protocol = address(fastMCTPTokenMessenger);
-
-            // bytes memory hookData = bridgePayload.customPayload;
-
-            // protocolData = abi.encodeWithSelector(
-            //     ITokenMessengerV2.depositForBurnWithHook.selector,
-            //     amount - bridgePayload.hubRelayerFee,
-            //     uint32(bridgePayload.destChain),
-            //     getFastMCTPMintRecipient(
-            //         uint32(bridgePayload.destChain),
-            //         localToken
-            //     ),
-            //     localToken,
-            //     getFastMCTPCaller(uint32(bridgePayload.destChain)),
-            //     0, // maxFee
-            //     0, // minFinalityThreshold
-            //     hookData
-            // );
+        } else if (bridgePayload.route == HubRoute.MayanCircle) {
+            mayanCircle.bridgeWithFee(
+                localToken,
+                amount,
+                bridgePayload.redeemFee,
+                bridgePayload.gasDrop,
+                bridgePayload.destAddress,
+                bridgePayload.destChain,
+                bridgePayload.bridgePayloadType,
+                bridgePayload.customPayload
+            );
         } else {
-            revert UnsupportedDomain();
+            revert UnsupportedRoute();
         }
-
-        // TODO: Remove forwarder call
-        // (bool success, ) = mayanForwarder.call(
-        //     abi.encodeWithSignature(
-        //         "forwardERC20(address,uint256,(uint256,uint256,uint8,bytes32,bytes32),address,bytes)",
-        //         localToken,
-        //         amount,
-        //         emptyPermit,
-        //         protocol,
-        //         protocolData
-        //     )
-        // );
-
-        // if (!success) {
-        //     revert ForwarderCallFailed();
-        // }
     }
 
     function processOrderPayload(
@@ -292,110 +295,6 @@ contract ZeroXHub is ReentrancyGuard {
         uint256 amount,
         HubPayloadOrder memory orderPayload
     ) internal {
-        approveIfNeeded(localToken, mayanForwarder, amount, false);
-
-        PermitParams memory emptyPermit = PermitParams({
-            value: 0,
-            deadline: 0,
-            v: 0,
-            r: bytes32(0),
-            s: bytes32(0)
-        });
-
-        address swapProtocol = address(0);
-        bytes memory swapData = new bytes(0);
-
-        address targetProtocol;
-        bytes memory targetData;
-
-        address middleToken = truncateAddress(orderPayload.tokenOut);
-
-        if (isMayanCircleDomain[uint32(orderPayload.destChain)]) {
-            // TODO: Call MayanCircle interface
-            // targetProtocol = address(mayanTokenMessenger);
-
-            // targetData = abi.encodeWithSelector(
-            //     ITokenMessenger.depositForBurnWithCaller.selector,
-            //     0, // Amount will be replaced by MayanForwarder
-            //     uint32(orderPayload.destChain),
-            //     getMayanCircleMintRecipient(
-            //         uint32(orderPayload.destChain),
-            //         middleToken
-            //     ),
-            //     middleToken,
-            //     getMayanCircleCaller(uint32(orderPayload.destChain))
-            // );
-        } else if (isFastMCTPDomain[uint32(orderPayload.destChain)]) {
-            // TODO: Call FastMCTP interface
-            // targetProtocol = address(fastMCTPTokenMessenger);
-
-            // bytes memory hookData = new bytes(0);
-
-            // targetData = abi.encodeWithSelector(
-            //     ITokenMessengerV2.depositForBurnWithHook.selector,
-            //     0, // Amount will be replaced by MayanForwarder
-            //     uint32(orderPayload.destChain),
-            //     getFastMCTPMintRecipient(
-            //         uint32(orderPayload.destChain),
-            //         middleToken
-            //     ),
-            //     middleToken,
-            //     getFastMCTPCaller(uint32(orderPayload.destChain)),
-            //     0, // maxFee
-            //     0, // minFinalityThreshold
-            //     hookData
-            // );
-        } else {
-            revert UnsupportedDomain();
-        }
-
-        // TODO: Remove forwarder call
-        // (bool success, ) = mayanForwarder.call(
-        //     abi.encodeWithSignature(
-        //         "swapAndForwardERC20(address,uint256,(uint256,uint256,uint8,bytes32,bytes32),address,bytes,address,uint256,address,bytes)",
-        //         localToken,
-        //         amount,
-        //         emptyPermit,
-        //         swapProtocol,
-        //         swapData,
-        //         middleToken,
-        //         orderPayload.minAmountOut,
-        //         targetProtocol,
-        //         targetData
-        //     )
-        // );
-
-        // if (!success) {
-        //     revert ForwarderCallFailed();
-        // }
-    }
-
-    function extractHookData(
-        bytes memory cctpMsg
-    ) internal pure returns (bytes memory) {
-        uint256 hookDataLength = cctpMsg.length - HOOK_DATA_INDEX;
-        bytes memory hookData = new bytes(hookDataLength);
-
-        for (uint256 i = 0; i < hookDataLength; i++) {
-            hookData[i] = cctpMsg[HOOK_DATA_INDEX + i];
-        }
-
-        return hookData;
-    }
-
-    function extractMessageBody(
-        bytes memory cctpMsg
-    ) internal pure returns (bytes memory) {
-        // For MayanCircle messages, the structure may be different
-        uint256 messageBodyIndex = 120; // Adjust based on the CCTP message structure
-        uint256 messageBodyLength = cctpMsg.length - messageBodyIndex;
-        bytes memory messageBody = new bytes(messageBodyLength);
-
-        for (uint256 i = 0; i < messageBodyLength; i++) {
-            messageBody[i] = cctpMsg[messageBodyIndex + i];
-        }
-
-        return messageBody;
     }
 
     function decodeHubPayloadBridge(
@@ -407,48 +306,62 @@ contract ZeroXHub is ReentrancyGuard {
         );
 
         HubPayloadBridge memory payload;
-        payload.hubPayloadType = uint8(data[0]);
+        payload.hubPayloadType = data.toUint8(0);
 
         uint256 offset = 1;
 
         // hubRelayerFee (uint64 - 8 bytes)
-        payload.hubRelayerFee = uint64(bytes8(extractBytes(data, offset, 8)));
+        payload.hubRelayerFee = data.toUint64(offset);
         offset += 8;
 
         // destAddress (bytes32 - 32 bytes)
-        payload.destAddress = bytes32(extractBytes(data, offset, 32));
+        payload.destAddress = data.toBytes32(offset);
         offset += 32;
 
         // destChain (uint16 - 2 bytes)
-        payload.destChain = uint16(bytes2(extractBytes(data, offset, 2)));
+        payload.destChain = data.toUint16(offset);
         offset += 2;
 
         // gasDrop (uint64 - 8 bytes)
-        payload.gasDrop = uint64(bytes8(extractBytes(data, offset, 8)));
+        payload.gasDrop = data.toUint64(offset);
         offset += 8;
 
         // redeemFee (uint64 - 8 bytes)
-        payload.redeemFee = uint64(bytes8(extractBytes(data, offset, 8)));
+        payload.redeemFee = data.toUint64(offset);
         offset += 8;
 
         // bridgePayloadType (uint8 - 1 byte)
-        payload.bridgePayloadType = uint8(data[offset]);
+        payload.bridgePayloadType = data.toUint8(offset);
         offset += 1;
 
-        // referrerAddr (bytes32 - 32 bytes)
-        payload.referrerAddr = bytes32(extractBytes(data, offset, 32));
-        offset += 32;
+        // route (uint8 - 1 byte)
+        payload.route = HubRoute(data.toUint8(offset));
+        offset += 1;
 
         // customPayload (remaining bytes)
-        if (offset < data.length) {
-            uint256 customPayloadLength = data.length - offset;
-            payload.customPayload = new bytes(customPayloadLength);
-            for (uint256 i = 0; i < customPayloadLength; i++) {
-                payload.customPayload[i] = data[offset + i];
-            }
+        uint256 customPayloadLength = data.length - offset;
+        payload.customPayload = new bytes(customPayloadLength);
+        for (uint256 i = 0; i < customPayloadLength; i++) {
+            payload.customPayload[i] = data[offset + i];
         }
 
         return payload;
+    }
+
+    function encodeHubPayloadBridge(
+        HubPayloadBridge memory payload
+    ) view returns (bytes memory) {
+        return abi.encodePacked(
+            HUB_PAYLOAD_TYPE_BRIDGE,
+            payload.hubRelayerFee,
+            payload.destAddress,
+            payload.destChain,
+            payload.gasDrop,
+            payload.redeemFee,
+            payload.bridgePayloadType,
+            payload.route,
+            payload.customPayload
+        );
     }
 
     function decodeHubPayloadOrder(
@@ -460,63 +373,68 @@ contract ZeroXHub is ReentrancyGuard {
         );
 
         HubPayloadOrder memory payload;
-        payload.hubPayloadType = uint8(data[0]);
+        payload.hubPayloadType = data.toUint8(0);
 
         uint256 offset = 1;
 
         // hubRelayerFee (uint64 - 8 bytes)
-        payload.hubRelayerFee = uint64(bytes8(extractBytes(data, offset, 8)));
+        payload.hubRelayerFee = data.toUint64(offset);
         offset += 8;
 
         // destAddress (bytes32 - 32 bytes)
-        payload.destAddress = bytes32(extractBytes(data, offset, 32));
+        payload.destAddress = data.toBytes32(offset);
         offset += 32;
 
         // destChain (uint16 - 2 bytes)
-        payload.destChain = uint16(bytes2(extractBytes(data, offset, 2)));
+        payload.destChain = data.toUint16(offset);
         offset += 2;
 
         // tokenOut (bytes32 - 32 bytes)
-        payload.tokenOut = bytes32(extractBytes(data, offset, 32));
+        payload.tokenOut = data.toBytes32(offset);
         offset += 32;
 
         // minAmountOut (uint64 - 8 bytes)
-        payload.minAmountOut = uint64(bytes8(extractBytes(data, offset, 8)));
+        payload.minAmountOut = data.toUint64(offset);
         offset += 8;
 
         // gasDrop (uint64 - 8 bytes)
-        payload.gasDrop = uint64(bytes8(extractBytes(data, offset, 8)));
+        payload.gasDrop = data.toUint64(offset);
         offset += 8;
 
         // redeemFee (uint64 - 8 bytes)
-        payload.redeemFee = uint64(bytes8(extractBytes(data, offset, 8)));
+        payload.redeemFee = data.toUint64(offset);
         offset += 8;
 
         // referrerAddr (bytes32 - 32 bytes)
-        payload.referrerAddr = bytes32(extractBytes(data, offset, 32));
+        payload.referrerAddr = data.toBytes32(offset);
         offset += 32;
 
         // referrerBps (uint8 - 1 byte)
-        if (offset < data.length) {
-            payload.referrerBps = uint8(data[offset]);
-        }
+        payload.referrerBps = data.toUint8(offset);
+        offset += 1;
+
+        // route (uint8 - 1 byte)
+        payload.route = HubRoute(data.toUint8(offset));
 
         return payload;
     }
 
-    function extractBytes(
-        bytes memory data,
-        uint256 start,
-        uint256 length
-    ) internal pure returns (bytes memory) {
-        require(start + length <= data.length, "Invalid slice parameters");
-
-        bytes memory result = new bytes(length);
-        for (uint256 i = 0; i < length; i++) {
-            result[i] = data[start + i];
-        }
-
-        return result;
+    function encodeHubPayloadOrder(
+        HubPayloadOrder memory payload
+    ) view returns (bytes memory) {
+        return abi.encodePacked(
+            HUB_PAYLOAD_TYPE_ORDER,
+            payload.hubRelayerFee,
+            payload.destAddress,
+            payload.destChain,
+            payload.tokenOut,
+            payload.minAmountOut,
+            payload.gasDrop,
+            payload.redeemFee,
+            payload.referrerAddr,
+            payload.referrerBps,
+            payload.route
+        );
     }
 
     function receiveFastMCTPMessage(
@@ -530,215 +448,29 @@ contract ZeroXHub is ReentrancyGuard {
 
         uint32 sourceDomain = cctpMsg.toUint32(sourceIndex);
         bytes32 sourceToken = cctpMsg.toBytes32(sourceTokenIndex);
-        address localToken = fastMCTPTokenMessenger.localMinter().getLocalToken(
-            sourceDomain,
-            sourceToken
-        );
+        address localToken = fastMCTP.cctpTokenMessengerV2().localMinter().getLocalToken(sourceDomain, sourceToken);
 
         uint256 balance = IERC20(localToken).balanceOf(address(this));
-
-        bool success = fastMCTPTokenMessenger
-            .localMessageTransmitter()
-            .receiveMessage(cctpMsg, cctpSigs);
-        if (!success) {
-            revert CctpReceiveFailed();
-        }
-
-        uint256 newBalance = IERC20(localToken).balanceOf(address(this));
-        uint256 receivedAmount = newBalance - balance;
+        fastMCTP.redeem(cctpMsg, cctpSigs);
+        uint256 receivedAmount = IERC20(localToken).balanceOf(address(this)) - balance;
 
         return (localToken, receivedAmount);
     }
 
-    function receiveMayanCircleMessage(
-        bytes memory cctpMsg,
-        bytes memory cctpSigs
-    ) internal returns (address, uint256) {
-        // CCTP_TOKEN_INDEX
-        uint256 sourceTokenIndex = 120;
-        // CCTP_DOMAIN_INDEX
-        uint256 sourceIndex = 4;
+	function approveIfNeeded(address tokenAddr, address spender, uint256 amount, bool max) internal {
+		IERC20 token = IERC20(tokenAddr);
+		uint256 currentAllowance = token.allowance(address(this), spender);
 
-        uint32 sourceDomain = cctpMsg.toUint32(sourceIndex);
-        bytes32 sourceToken = cctpMsg.toBytes32(sourceTokenIndex);
-        address localToken = mayanTokenMessenger.localMinter().getLocalToken(
-            sourceDomain,
-            sourceToken
-        );
-
-        uint256 balance = IERC20(localToken).balanceOf(address(this));
-
-        bool success = mayanTokenMessenger
-            .localMessageTransmitter()
-            .receiveMessage(cctpMsg, cctpSigs);
-        if (!success) {
-            revert CctpReceiveFailed();
-        }
-
-        uint256 newBalance = IERC20(localToken).balanceOf(address(this));
-        uint256 receivedAmount = newBalance - balance;
-
-        return (localToken, receivedAmount);
-    }
-
-    function getFastMCTPMintRecipient(
-        uint32 destDomain,
-        address tokenIn
-    ) internal view returns (bytes32) {
-        bytes32 key = keccak256(abi.encodePacked(destDomain, tokenIn));
-        bytes32 mintRecipient = fastMCTPMintRecipients[key];
-        if (mintRecipient == bytes32(0)) {
-            revert MintRecipientNotSet();
-        }
-        return mintRecipient;
-    }
-
-    function getMayanCircleMintRecipient(
-        uint32 destDomain,
-        address tokenIn
-    ) internal view returns (bytes32) {
-        bytes32 key = keccak256(abi.encodePacked(destDomain, tokenIn));
-        bytes32 mintRecipient = mayanCircleMintRecipients[key];
-        if (mintRecipient == bytes32(0)) {
-            revert MintRecipientNotSet();
-        }
-        return mintRecipient;
-    }
-
-    function getFastMCTPCaller(
-        uint32 destDomain
-    ) internal view returns (bytes32) {
-        bytes32 caller = fastMCTPDomainCallers[destDomain];
-        if (caller == bytes32(0)) {
-            revert CallerNotSet();
-        }
-        return caller;
-    }
-
-    function getMayanCircleCaller(
-        uint32 destDomain
-    ) internal view returns (bytes32) {
-        bytes32 caller = mayanCircleDomainCallers[destDomain];
-        if (caller == bytes32(0)) {
-            revert CallerNotSet();
-        }
-        return caller;
-    }
-
-    function approveIfNeeded(
-        address tokenAddr,
-        address spender,
-        uint256 amount,
-        bool max
-    ) internal {
-        IERC20 token = IERC20(tokenAddr);
-        uint256 currentAllowance = token.allowance(address(this), spender);
-
-        if (currentAllowance < amount) {
-            if (currentAllowance > 0) {
-                token.safeApprove(spender, 0);
-            }
-            token.safeApprove(spender, max ? type(uint256).max : amount);
-        }
-    }
+		if (currentAllowance < amount) {
+			if (currentAllowance > 0) {
+				token.safeApprove(spender, 0);
+			}
+			token.safeApprove(spender, max ? type(uint256).max : amount);
+		}
+	}
 
     function truncateAddress(bytes32 b) internal pure returns (address) {
         return address(uint160(uint256(b)));
-    }
-
-    function setSupportedToken(address token, bool isSupported) external {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        supportedTokens[token] = isSupported;
-    }
-
-    function setFastMCTPDomain(uint32 domain, bool isSupported) external {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        isFastMCTPDomain[domain] = isSupported;
-    }
-
-    function setMayanCircleDomain(uint32 domain, bool isSupported) external {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        isMayanCircleDomain[domain] = isSupported;
-    }
-
-    function setFastMCTPMintRecipient(
-        uint32 destDomain,
-        address tokenIn,
-        bytes32 mintRecipient
-    ) external {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        bytes32 key = keccak256(abi.encodePacked(destDomain, tokenIn));
-        if (fastMCTPMintRecipients[key] != bytes32(0)) {
-            revert AlreadySet();
-        }
-        fastMCTPMintRecipients[key] = mintRecipient;
-    }
-
-    function setMayanCircleMintRecipient(
-        uint32 destDomain,
-        address tokenIn,
-        bytes32 mintRecipient
-    ) external {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        bytes32 key = keccak256(abi.encodePacked(destDomain, tokenIn));
-        if (mayanCircleMintRecipients[key] != bytes32(0)) {
-            revert AlreadySet();
-        }
-        mayanCircleMintRecipients[key] = mintRecipient;
-    }
-
-    function setFastMCTPDomainCaller(uint32 domain, bytes32 caller) external {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        if (fastMCTPDomainCallers[domain] != bytes32(0)) {
-            revert AlreadySet();
-        }
-        fastMCTPDomainCallers[domain] = caller;
-    }
-
-    function setMayanCircleDomainCaller(
-        uint32 domain,
-        bytes32 caller
-    ) external {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        if (mayanCircleDomainCallers[domain] != bytes32(0)) {
-            revert AlreadySet();
-        }
-        mayanCircleDomainCallers[domain] = caller;
-    }
-
-    function setFeeManager(address _feeManager) external {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        feeManager = _feeManager;
-    }
-
-    function setMayanForwarder(address _mayanForwarder) external {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        mayanForwarder = _mayanForwarder;
-    }
-
-    function setPause(bool _paused) external {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        paused = _paused;
     }
 
     function changeGuardian(address newGuardian) external {
@@ -761,6 +493,22 @@ contract ZeroXHub is ReentrancyGuard {
         }
         IERC20(token).safeTransfer(to, amount);
     }
+
+	function rescueEth(uint256 amount, address payable to) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		payEth(to, amount, true);
+	}
+
+    function payEth(address to, uint256 amount, bool revertOnFailure) internal {
+		(bool success, ) = payable(to).call{value: amount}('');
+		if (revertOnFailure) {
+			if (success != true) {
+				revert EthTransferFailed();
+			}
+		}
+	}
 
     receive() external payable {}
 }
