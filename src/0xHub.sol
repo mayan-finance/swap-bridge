@@ -36,18 +36,7 @@ contract ZeroXHub is ReentrancyGuard {
 
     // Errors
     error Unauthorized();
-    error UnsupportedToken();
-    error UnsupportedDomain();
-    error InvalidMintRecipient();
-    error CallerNotSet();
-    error MintRecipientNotSet();
-    error AlreadySet();
-    error CctpReceiveFailed();
-    error InvalidAmountOut();
-    error ForwarderCallFailed();
-    error InvalidPayloadType();
     error UnsupportedHubPayloadType();
-    error InsufficientReceivedAmount();
     error EthTransferFailed();
     error UnsupportedRoute();
 
