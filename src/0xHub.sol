@@ -52,7 +52,7 @@ contract ZeroXHub is ReentrancyGuard {
         bytes32 sourceAddress;
 
         bytes32 destAddress;
-        uint16 destChain;
+        uint32 destDomain;
         uint64 gasDrop;
         uint64 redeemFee;
         bytes32 referrerAddress;
@@ -71,6 +71,7 @@ contract ZeroXHub is ReentrancyGuard {
 
         bytes32 destAddress;
         uint16 destChain;
+        uint32 destDomain;
         bytes32 tokenOut;
         uint64 amountOutMin;
         uint64 gasDrop;
@@ -183,7 +184,7 @@ contract ZeroXHub is ReentrancyGuard {
                 uint256(bridgePayload.circleMaxFee),
                 bridgePayload.gasDrop,
                 bridgePayload.destAddress,
-                bridgePayload.destChain,
+                bridgePayload.destDomain,
                 bridgePayload.referrerAddress,
                 bridgePayload.referrerBps,
                 uint8(1),
@@ -197,7 +198,7 @@ contract ZeroXHub is ReentrancyGuard {
                 bridgePayload.redeemFee,
                 bridgePayload.gasDrop,
                 bridgePayload.destAddress,
-                bridgePayload.destChain,
+                bridgePayload.destDomain,
                 uint8(1),
                 empty
             );
@@ -229,7 +230,7 @@ contract ZeroXHub is ReentrancyGuard {
                 localToken,
                 amount,
                 uint256(orderPayload.circleMaxFee),
-                orderPayload.destChain,
+                orderPayload.destDomain,
                 orderPayload.minFinalityThreshold,
                 fastMCTPPayload
             );
@@ -347,8 +348,8 @@ contract ZeroXHub is ReentrancyGuard {
         payload.destAddress = data.toBytes32(offset);
         offset += 32;
 
-        payload.destChain = data.toUint16(offset);
-        offset += 2;
+        payload.destDomain = data.toUint32(offset);
+        offset += 4;
 
         payload.gasDrop = data.toUint64(offset);
         offset += 8;
@@ -379,7 +380,7 @@ contract ZeroXHub is ReentrancyGuard {
             payload.hubRelayerFee,
             payload.sourceAddress,
             payload.destAddress,
-            payload.destChain,
+            payload.destDomain,
             payload.gasDrop,
             payload.redeemFee,
             payload.referrerAddress,
@@ -412,6 +413,9 @@ contract ZeroXHub is ReentrancyGuard {
 
         payload.destChain = data.toUint16(offset);
         offset += 2;
+
+        payload.destDomain = data.toUint32(offset);
+        offset += 4;
 
         payload.tokenOut = data.toBytes32(offset);
         offset += 32;
@@ -457,6 +461,7 @@ contract ZeroXHub is ReentrancyGuard {
             payload.sourceAddress,
             payload.destAddress,
             payload.destChain,
+            payload.destDomain,
             payload.tokenOut,
             payload.amountOutMin,
             payload.gasDrop,
@@ -464,12 +469,12 @@ contract ZeroXHub is ReentrancyGuard {
             payload.refundFee,
             payload.deadline,
             payload.referrerAddr,
-            payload.referrerBps,
-            payload.circleMaxFee
+            payload.referrerBps
         );
 
         encoded = abi.encodePacked(
             encoded,
+            payload.circleMaxFee,
             payload.minFinalityThreshold
         );
 
