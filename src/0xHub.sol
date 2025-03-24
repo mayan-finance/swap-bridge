@@ -294,7 +294,9 @@ contract ZeroXHub is ReentrancyGuard {
             customPayload: keccak256(payload)
         });
 
-        (address localToken, uint256 amount) = receiveMayanCircleMessage(cctpMsg, cctpSigs, encodedVm, params);
+        uint32 sourceDomain = cctpMsg.toUint32(CCTP_DOMAIN_INDEX);
+        bytes32 sourceToken = cctpMsg.toBytes32(CCTP_TOKEN_INDEX);
+        address localToken = mayanCircle.cctpTokenMessenger().localMinter().getLocalToken(sourceDomain, sourceToken);
 
         uint256 ethBalance = address(this).balance - msg.value;
         uint256 balance = IERC20(localToken).balanceOf(address(this));
