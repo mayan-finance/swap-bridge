@@ -373,7 +373,7 @@ contract ZeroXHub is ReentrancyGuard {
 
     function encodeHubPayloadBridge(
         HubPayloadBridge memory payload
-    ) public view returns (bytes memory) {
+    ) public pure returns (bytes memory) {
         return abi.encodePacked(
             HUB_PAYLOAD_TYPE_BRIDGE,
             payload.hubRelayerFee,
@@ -442,11 +442,13 @@ contract ZeroXHub is ReentrancyGuard {
 
         payload.minFinalityThreshold = data.toUint32(offset);
         offset += 4;
+
+        return payload;
     }
 
     function encodeHubPayloadOrder(
         HubPayloadOrder memory payload
-    ) public view returns (bytes memory) {
+    ) public pure returns (bytes memory) {
         bytes memory encoded;
 
         encoded = abi.encodePacked(
@@ -529,7 +531,7 @@ contract ZeroXHub is ReentrancyGuard {
         IERC20(token).safeTransfer(tx.origin, fee);
     }
 
-    function getRelayerKey(address token, address relayer) public view returns (bytes32) {
+    function getRelayerKey(address token, address relayer) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(token, relayer));
     }
 
