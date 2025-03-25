@@ -34,6 +34,39 @@ contract ZeroXHub is ReentrancyGuard {
     address public guardian;
     address public nextGuardian;
 
+    // Events
+    event FastMCTPBridge(
+        address localToken,
+        uint256 amount,
+        uint64 redeemFee,
+        uint64 circleMaxFee,
+        uint64 gasDrop,
+        bytes32 destAddress,
+        uint32 destDomain,
+        bytes32 referrerAddress,
+        uint8 referrerBps,
+        uint32 minFinalityThreshold
+    );
+    event MayanCircleBridgeWithFee(
+        address localToken,
+        uint256 amount,
+        uint64 redeemFee,
+        uint64 gasDrop,
+        bytes32 destAddress,
+        uint32 destDomain
+    );
+    event FastMCTPCreateOrder(
+        address localToken,
+        uint256 amount,
+        uint64 circleMaxFee,
+        uint32 destDomain,
+        uint32 minFinalityThreshold,
+        IFastMCTP.OrderPayload fastMCTPPayload
+    );
+    event MayanCircleCreateOrder(
+        IMayanCircle.OrderParams mayanCircleOrderParams
+    );
+
     // Errors
     error Unauthorized();
     error UnsupportedHubPayloadType();
@@ -191,6 +224,19 @@ contract ZeroXHub is ReentrancyGuard {
                 bridgePayload.minFinalityThreshold,
                 empty
             );
+
+            emit FastMCTPBridge(
+                localToken,
+                amount,
+                bridgePayload.redeemFee,
+                bridgePayload.circleMaxFee,
+                bridgePayload.gasDrop,
+                bridgePayload.destAddress,
+                bridgePayload.destDomain,
+                bridgePayload.referrerAddress,
+                bridgePayload.referrerBps,
+                bridgePayload.minFinalityThreshold
+            );
         } else if (protocol == PayloadProtocol.MayanCircle) {
             mayanCircle.bridgeWithFee(
                 localToken,
@@ -201,6 +247,15 @@ contract ZeroXHub is ReentrancyGuard {
                 bridgePayload.destDomain,
                 uint8(1),
                 empty
+            );
+
+            emit MayanCircleBridgeWithFee(
+                localToken,
+                amount,
+                bridgePayload.redeemFee,
+                bridgePayload.gasDrop,
+                bridgePayload.destAddress,
+                bridgePayload.destDomain
             );
         } else {
             revert UnsupportedRoute();
@@ -234,6 +289,15 @@ contract ZeroXHub is ReentrancyGuard {
                 orderPayload.minFinalityThreshold,
                 fastMCTPPayload
             );
+
+            emit FastMCTPCreateOrder(
+                localToken,
+                amount,
+                orderPayload.circleMaxFee,
+                orderPayload.destDomain,
+                orderPayload.minFinalityThreshold,
+                fastMCTPPayload
+            );
         } else if (protocol == PayloadProtocol.MayanCircle) {
             IMayanCircle.OrderParams memory mayanCircleOrderParams = IMayanCircle.OrderParams ({
                 tokenIn: localToken,
@@ -249,6 +313,10 @@ contract ZeroXHub is ReentrancyGuard {
                 referrerBps: orderPayload.referrerBps
             });
             mayanCircle.createOrder(mayanCircleOrderParams);
+
+            emit MayanCircleCreateOrder(
+                mayanCircleOrderParams
+            );
         } else {
             revert UnsupportedRoute();
         }
