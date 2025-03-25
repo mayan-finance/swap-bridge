@@ -413,6 +413,9 @@ contract ZeroXHub is ReentrancyGuard {
         payload.hubRelayerFee = data.toUint64(offset);
         offset += 8;
 
+        payload.sourceAddress = data.toBytes32(offset);
+        offset += 32;
+
         payload.destAddress = data.toBytes32(offset);
         offset += 32;
 
