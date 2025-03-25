@@ -210,6 +210,8 @@ contract ZeroXHub is ReentrancyGuard {
     ) internal {
         bytes memory empty;
         if (protocol == PayloadProtocol.FastMCTP) {
+            IERC20(localToken).approve(address(fastMCTP), amount);
+
             fastMCTP.bridge(
                 localToken,
                 amount,
@@ -238,6 +240,8 @@ contract ZeroXHub is ReentrancyGuard {
                 bridgePayload.minFinalityThreshold
             );
         } else if (protocol == PayloadProtocol.MayanCircle) {
+            IERC20(localToken).approve(address(mayanCircle), amount);
+
             mayanCircle.bridgeWithFee(
                 localToken,
                 amount,
@@ -269,6 +273,8 @@ contract ZeroXHub is ReentrancyGuard {
         PayloadProtocol protocol
     ) internal {
         if (protocol == PayloadProtocol.FastMCTP) {
+            IERC20(localToken).approve(address(fastMCTP), amount);
+
             IFastMCTP.OrderPayload memory fastMCTPPayload = IFastMCTP.OrderPayload ({
                 payloadType: uint8(3),
                 destAddr: orderPayload.destAddress,
@@ -299,6 +305,8 @@ contract ZeroXHub is ReentrancyGuard {
                 fastMCTPPayload
             );
         } else if (protocol == PayloadProtocol.MayanCircle) {
+            IERC20(localToken).approve(address(mayanCircle), amount);
+
             IMayanCircle.OrderParams memory mayanCircleOrderParams = IMayanCircle.OrderParams ({
                 tokenIn: localToken,
                 amountIn: amount,
