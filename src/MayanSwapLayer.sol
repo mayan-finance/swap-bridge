@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "ExcessivelySafeCall/ExcessivelySafeCall.sol";
 import "./libs/BytesLib.sol";
 import "./interfaces/wormhole-ll/ITokenRouter.sol";
+import "./interfaces/IWormhole.sol";
 import {OrderResponse} from "./interfaces/wormhole-ll/ITokenRouterTypes.sol";
 
 
@@ -17,6 +18,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 	using ExcessivelySafeCall for address;
 
 	ITokenRouter public immutable tokenRouter;
+	IWormhole public immutable wormhole;
 	address public immutable localToken;
 	address public feeManager;
 
@@ -33,12 +35,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 	uint8 internal constant ETH_DECIMALS = 18;
 
 	uint256 internal constant CCTPV2_SOURCE_DOMAIN_INDEX = 4;
-	uint256 internal constant CCTPV2_DESTINATION_DOMAIN_INDEX = 8;
 	uint256 internal constant CCTPV2_NONCE_INDEX = 12;
-	uint256 internal constant CCTPV2_DETINATION_CALLER_INDEX = 108;
 	uint256 internal constant CCTPV2_MESSAGE_BODY_INDEX = 148;
-	uint256 internal constant CCTPV2_SOURCE_TOKEN_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 4;
-	uint256 internal constant CCTPV2_MINT_RECIPIENT_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 36;
 	uint256 internal constant HOOK_DATA_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 228;
 
 	uint256 internal constant GAS_LIMIT_FEE_MANAGER = 1000000;
@@ -100,6 +98,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 		address _feeManager
 	) {
 		tokenRouter = ITokenRouter(_tokenRouter);
+		wormhole = tokenRouter.wormhole();
 		localToken = address(tokenRouter.orderToken());
 		feeManager = _feeManager;
 		guardian = msg.sender;
@@ -191,8 +190,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes memory cctpMsg,
 		bytes memory cctpSigs
 	) external nonReentrant payable {
-
-		BridgePayload memory bridgePayload = recreateBridgePayload(cctpMsg);
+		bytes memory payload = wormhole.parseVM(encodedVM);
+		BridgePayload memory bridgePayload = recreateBridgePayload(payload);
 
 		if (bridgePayload.payloadType != 1 && bridgePayload.payloadType != 2) {
 			revert InvalidPayloadType();
@@ -249,7 +248,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		address swapProtocol,
 		bytes memory swapData
 	) external nonReentrant payable {
-		OrderPayload memory orderPayload = recreateOrderPayload(cctpMsg);
+		bytes memory payload = wormhole.parseVM(encodedVM);
+		OrderPayload memory orderPayload = recreateOrderPayload(payload);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
 		}
@@ -334,8 +334,9 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes memory cctpSigs
 	) external nonReentrant payable {
 		uint256 amount = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
-
-		OrderPayload memory orderPayload = recreateOrderPayload(cctpMsg);
+		
+		bytes memory payload = wormhole.parseVM(encodedVM);
+		OrderPayload memory orderPayload = recreateOrderPayload(payload);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
 		}
