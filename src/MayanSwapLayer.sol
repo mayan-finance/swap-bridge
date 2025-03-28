@@ -22,7 +22,6 @@ contract MayanSwapLayer is ReentrancyGuard {
 	address public immutable localToken;
 	address public feeManager;
 
-	mapping(bytes32 => bytes32) public keyToMintRecipient;
 	mapping(uint32 => bytes32) public domainToCaller;
 
 	mapping(address => bool) public whitelistedSwapProtocols;
@@ -44,17 +43,13 @@ contract MayanSwapLayer is ReentrancyGuard {
 
 	error Paused();
 	error Unauthorized();
-	error CctpReceiveFailed();
 	error InvalidGasDrop();
-	error InvalidMintRecipient();
 	error InvalidRedeemFee();
 	error InvalidPayload();
 	error DeadlineViolation();
-	error InvalidAddress();
 	error InvalidPayloadType();
 	error EthTransferFailed();
 	error InvalidAmountOut();
-	error MintRecipientNotSet();
 	error CallerNotSet();
 	error InvalidRefundFee();
 	error AlreadySet();
@@ -568,25 +563,6 @@ contract MayanSwapLayer is ReentrancyGuard {
 				32, // _maxCopy
 				abi.encodeWithSignature("depositFee(address,address,uint256)", relayer, token, amount)
 			);
-	}
-
-	function getMintRecipient(uint32 destDomain, address tokenIn) internal view returns (bytes32) {
-		bytes32 mintRecepient = keyToMintRecipient[keccak256(abi.encodePacked(destDomain, tokenIn))];
-		if (mintRecepient == bytes32(0)) {
-			revert MintRecipientNotSet();
-		}
-		return mintRecepient;
-	}
-
-	function setMintRecipient(uint32 destDomain, address tokenIn, bytes32 mintRecipient) public {
-		if (msg.sender != guardian) {
-			revert Unauthorized();
-		}
-		bytes32 key = keccak256(abi.encodePacked(destDomain, tokenIn));
-		if (keyToMintRecipient[key] != bytes32(0)) {
-			revert AlreadySet();
-		}
-		keyToMintRecipient[key] = mintRecipient;
 	}
 
 	function getCaller(uint32 destDomain) internal view returns (bytes32 caller) {
