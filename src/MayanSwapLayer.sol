@@ -8,6 +8,8 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "ExcessivelySafeCall/ExcessivelySafeCall.sol";
 import "./libs/BytesLib.sol";
 import "./interfaces/wormhole-ll/ITokenRouter.sol";
+import {OrderResponse} from "./interfaces/wormhole-ll/ITokenRouterTypes.sol";
+
 
 contract MayanSwapLayer is ReentrancyGuard {
 	using SafeERC20 for IERC20;
@@ -15,6 +17,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 	using ExcessivelySafeCall for address;
 
 	ITokenRouter public immutable tokenRouter;
+	address public immutable localToken;
 	address public feeManager;
 
 	mapping(bytes32 => bytes32) public keyToMintRecipient;
@@ -85,13 +88,6 @@ contract MayanSwapLayer is ReentrancyGuard {
 		uint8 referrerBps;
 	}
 
-	modifier checkRecipient(bytes memory cctpMsg) {
-		if (truncateAddress(cctpMsg.toBytes32(CCTPV2_MINT_RECIPIENT_INDEX)) != address(this)) {
-			revert InvalidMintRecipient();
-		}
-		_;
-	}
-
 	modifier whenNotPaused() {
 		if (paused) {
 			revert Paused();
@@ -104,25 +100,23 @@ contract MayanSwapLayer is ReentrancyGuard {
 		address _feeManager
 	) {
 		tokenRouter = ITokenRouter(_tokenRouter);
+		localToken = address(tokenRouter.orderToken());
 		feeManager = _feeManager;
 		guardian = msg.sender;
 	}
 
 	function bridge(
-		address tokenIn,
-		uint256 amountIn,
+		uint64 amountIn,
 		uint64 redeemFee,
-		uint256 circleMaxFee,
 		uint64 gasDrop,
 		bytes32 destAddr,
-		uint32 destDomain,
+		uint16 destDomain,
 		bytes32 referrerAddress,
 		uint8 referrerBps,
 		uint8 payloadType,
-		uint32 minFinalityThreshold,
 		bytes memory customPayload
 	) external nonReentrant whenNotPaused {
-		if (redeemFee + circleMaxFee >= amountIn) {
+		if (redeemFee >= amountIn) {
 			revert InvalidRedeemFee();
 		}
 
@@ -130,8 +124,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 			revert InvalidPayloadType();
 		}
 
-		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-		approveIfNeeded(tokenIn, address(tokenRouter), amountIn, true);
+		IERC20(localToken).safeTransferFrom(msg.sender, address(this), amountIn);
+		approveIfNeeded(localToken, address(tokenRouter), amountIn, true);
 
 		require(referrerBps <= 100, "ReferrerBps should be less than 100");
 
@@ -150,22 +144,24 @@ contract MayanSwapLayer is ReentrancyGuard {
 			customPayload: customPayloadHash
 		});
 
-		sendCctp(tokenIn, amountIn, destDomain, circleMaxFee, minFinalityThreshold, encodeBridgePayload(bridgePayload));
+		sendWormholeLL(
+			amountIn,
+			destDomain,
+			getCaller(destDomain),
+			encodeBridgePayload(bridgePayload)
+		);
 	}
 
 	function createOrder(
-		address tokenIn,
-		uint256 amountIn,
-		uint256 circleMaxFee,
-		uint32 destDomain,
-		uint32 minFinalityThreshold,
+		uint64 amountIn,
+		uint16 destDomain,
 		OrderPayload memory orderPayload
 	) external nonReentrant whenNotPaused {
-		if (orderPayload.redeemFee + circleMaxFee >= amountIn) {
+		if (orderPayload.redeemFee >= amountIn) {
 			revert InvalidRedeemFee();
 		}
 
-		if (orderPayload.refundFee + circleMaxFee >= amountIn) {
+		if (orderPayload.refundFee >= amountIn) {
 			revert InvalidRefundFee();
 		}
 
@@ -179,16 +175,22 @@ contract MayanSwapLayer is ReentrancyGuard {
 			revert InvalidGasDrop();
 		}
 
-		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-		approveIfNeeded(tokenIn, address(tokenRouter), amountIn, true);
+		IERC20(localToken).safeTransferFrom(msg.sender, address(this), amountIn);
+		approveIfNeeded(localToken, address(tokenRouter), amountIn, true);
 
-		sendCctp(tokenIn, amountIn, destDomain, circleMaxFee, minFinalityThreshold, encodeOrderPayload(orderPayload));
+		sendWormholeLL(
+			amountIn,
+			destDomain,
+			getCaller(destDomain),
+			encodeOrderPayload(orderPayload)
+		);
 	}
 
 	function redeem(
+		bytes memory encodedVM,
 		bytes memory cctpMsg,
 		bytes memory cctpSigs
-	) external nonReentrant payable checkRecipient(cctpMsg) {
+	) external nonReentrant payable {
 
 		BridgePayload memory bridgePayload = recreateBridgePayload(cctpMsg);
 
@@ -201,7 +203,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 			revert Unauthorized();
 		}
 
-		(address localToken, uint256 amount) = receiveCctp(cctpMsg, cctpSigs);
+		uint256 amount = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
 
 		if (bridgePayload.redeemFee > amount) {
 			revert InvalidRedeemFee();
@@ -212,7 +214,6 @@ contract MayanSwapLayer is ReentrancyGuard {
 		uint8 referrerBps = bridgePayload.referrerBps > 100 ? 100 : bridgePayload.referrerBps;
 		uint8 protocolBps = safeCalcFastMCTPProtocolBps(
 			bridgePayload.payloadType,
-			localToken,
 			amount,
 			localToken,
 			truncateAddress(bridgePayload.referrerAddr),
@@ -242,11 +243,12 @@ contract MayanSwapLayer is ReentrancyGuard {
 	}
 
 	function fulfillOrder(
+		bytes memory encodedVM,
 		bytes memory cctpMsg,
 		bytes memory cctpSigs,
 		address swapProtocol,
 		bytes memory swapData
-	) external nonReentrant payable checkRecipient(cctpMsg) {
+	) external nonReentrant payable {
 		OrderPayload memory orderPayload = recreateOrderPayload(cctpMsg);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
@@ -260,7 +262,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 			revert UnauthorizedSwapProtocol();
 		}
 
-		if (swapProtocol == address(tokenRouter) || swapProtocol == address(tokenRouter.localMessageTransmitter())) {
+		if (swapProtocol == address(tokenRouter)) {
 			revert UnauthorizedSwapProtocol();
 		}
 
@@ -268,15 +270,15 @@ contract MayanSwapLayer is ReentrancyGuard {
 			revert UnauthorizedMsgSender();
 		}
 
-		(address localToken, uint256 cctpAmount) = receiveCctp(cctpMsg, cctpSigs);
+		uint256 whLLAmount = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
 
 		if (orderPayload.redeemFee > 0) {
 			IERC20(localToken).safeTransfer(msg.sender, orderPayload.redeemFee);
 		}
 
-		cctpAmount = cctpAmount - uint256(orderPayload.redeemFee);
+		whLLAmount = whLLAmount - uint256(orderPayload.redeemFee);
 
-		(uint256 referrerAmount, uint256 protocolAmount) = getFeeAmounts(orderPayload, cctpAmount, localToken);
+		(uint256 referrerAmount, uint256 protocolAmount) = getFeeAmounts(orderPayload, whLLAmount);
 
 		if (referrerAmount > 0) {
 			try IERC20(localToken).transfer(truncateAddress(orderPayload.referrerAddr), referrerAmount) {} catch {}
@@ -288,7 +290,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 
 		address tokenOut = truncateAddress(orderPayload.tokenOut);
 		require(tokenOut != localToken, "tokenOut cannot be localToken");
-		approveIfNeeded(localToken, swapProtocol, cctpAmount - protocolAmount - referrerAmount, false);
+		approveIfNeeded(localToken, swapProtocol, whLLAmount - protocolAmount - referrerAmount, false);
 
 		uint256 amountOut;
 		if (tokenOut == address(0)) {
@@ -327,17 +329,18 @@ contract MayanSwapLayer is ReentrancyGuard {
 	}
 
 	function refund(
+		bytes memory encodedVM,
 		bytes memory cctpMsg,
 		bytes memory cctpSigs
-	) external nonReentrant payable checkRecipient(cctpMsg) {
-		(address localToken, uint256 amount) = receiveCctp(cctpMsg, cctpSigs);
+	) external nonReentrant payable {
+		uint256 amount = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
 
 		OrderPayload memory orderPayload = recreateOrderPayload(cctpMsg);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
 		}
 
-		if (orderPayload.deadline >= block.timestamp && localToken != truncateAddress(orderPayload.tokenOut)) {
+		if (orderPayload.deadline >= block.timestamp && address(localToken) != truncateAddress(orderPayload.tokenOut)) {
 			revert DeadlineViolation();
 		}
 
@@ -357,39 +360,33 @@ contract MayanSwapLayer is ReentrancyGuard {
 		emit OrderRefunded(cctpMsg.toUint32(CCTPV2_SOURCE_DOMAIN_INDEX), cctpMsg.toBytes32(CCTPV2_NONCE_INDEX), amount);
 	}
 
-	function receiveCctp(bytes memory cctpMsg, bytes memory cctpSigs) internal returns (address, uint256) {
-		// TODO: update with wormhole-ll
-		uint32 cctpSourceDomain = cctpMsg.toUint32(CCTPV2_SOURCE_DOMAIN_INDEX);
-		bytes32 cctpSourceToken = cctpMsg.toBytes32(CCTPV2_SOURCE_TOKEN_INDEX);
-		address localToken = tokenRouter.orderToken();
-
+	function receiveWormholeLL(
+		bytes memory encodedVM,
+		bytes memory cctpMsg,
+		bytes memory cctpSigs
+	) internal returns (uint256) {
 		uint256 amount = IERC20(localToken).balanceOf(address(this));
-		bool success = cctpTokenMessengerV2.localMessageTransmitter().receiveMessage(cctpMsg, cctpSigs);
-		if (!success) {
-			revert CctpReceiveFailed();
-		}
+		OrderResponse memory orderResponse = OrderResponse({
+			encodedWormholeMessage: encodedVM,
+			circleBridgeMessage: cctpMsg,
+			circleAttestation: cctpSigs
+		});
+		tokenRouter.redeemFill(orderResponse);
 		amount = IERC20(localToken).balanceOf(address(this)) - amount;
-		return (localToken, amount);
+		return amount;
 	}
 
-	function sendCctp(
-		address tokenIn,
-		uint256 amountIn,
-		uint32 destDomain,
-		uint256 maxFee,
-		uint32 minFinalityThreshold,
-		bytes memory hookData
+	function sendWormholeLL(
+		uint64 amountIn,
+		uint16 destDomain,
+		bytes32 redeemer,
+		bytes memory redeemerMessage
 	) internal {
-		// TODO: update with wormhole-ll
-		cctpTokenMessengerV2.depositForBurnWithHook(
+		tokenRouter.placeMarketOrder(
 			amountIn,
 			destDomain,
-			getMintRecipient(destDomain, tokenIn),
-			tokenIn,
-			getCaller(destDomain),
-			maxFee,
-			minFinalityThreshold,
-			hookData
+			redeemer,
+			redeemerMessage
 		);
 	}
 
@@ -496,27 +493,25 @@ contract MayanSwapLayer is ReentrancyGuard {
 		}
 	}
 
-	function getFeeAmounts(OrderPayload memory orderPayload, uint256 cctpAmount, address localToken) internal returns (uint256 referrerAmount, uint256 protocolAmount) {
+	function getFeeAmounts(OrderPayload memory orderPayload, uint256 whLLAmount) internal returns (uint256 referrerAmount, uint256 protocolAmount) {
 		uint8 referrerBps = orderPayload.referrerBps > 100 ? 100 : orderPayload.referrerBps;
-		referrerAmount = cctpAmount * referrerBps / 10000;
+		referrerAmount = whLLAmount * referrerBps / 10000;
 		uint8 protocolBps = safeCalcFastMCTPProtocolBps(
 			orderPayload.payloadType,
-			localToken,
-			cctpAmount,
+			whLLAmount,
 			truncateAddress(orderPayload.tokenOut),
 			truncateAddress(orderPayload.referrerAddr),
 			referrerBps
 		);
 		protocolBps = protocolBps > 100 ? 100 : protocolBps;
-		protocolAmount = cctpAmount * protocolBps / 10000;
+		protocolAmount = whLLAmount * protocolBps / 10000;
 
 		return (referrerAmount, protocolAmount);
 	}
 
     function safeCalcFastMCTPProtocolBps(
         uint8 payloadType,
-        address localToken,
-        uint256 cctpAmount,
+        uint256 whLLAmount,
         address tokenOut,
         address referrerAddr,
         uint8 referrerBps
@@ -530,7 +525,7 @@ contract MayanSwapLayer is ReentrancyGuard {
                     "calcFastMCTPProtocolBps(uint8,address,uint256,address,address,uint8)",
                     payloadType,
                     localToken,
-                    cctpAmount,
+                    whLLAmount,
                     tokenOut,
                     referrerAddr,
                     referrerBps
@@ -664,15 +659,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		payEth(to, amount, true);
 	}
 
-	function rescueRedeem(bytes memory cctpMsg, bytes memory cctpSigs) public {
-		if (truncateAddress(cctpMsg.toBytes32(CCTPV2_MINT_RECIPIENT_INDEX)) == address(this)) {
-			revert Unauthorized();
-		}
-
-		bool success = cctpTokenMessengerV2.localMessageTransmitter().receiveMessage(cctpMsg, cctpSigs);
-		if (!success) {
-			revert CctpReceiveFailed();
-		}
+	function rescueRedeem(bytes memory encodedVM, bytes memory cctpMsg, bytes memory cctpSigs) public {
+		receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
 	}
 
 	function setPause(bool _pause) public {
