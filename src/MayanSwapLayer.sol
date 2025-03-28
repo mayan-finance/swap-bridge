@@ -36,8 +36,6 @@ contract MayanSwapLayer is ReentrancyGuard {
 
 	uint256 internal constant CCTPV2_SOURCE_DOMAIN_INDEX = 4;
 	uint256 internal constant CCTPV2_NONCE_INDEX = 12;
-	uint256 internal constant CCTPV2_MESSAGE_BODY_INDEX = 148;
-	uint256 internal constant HOOK_DATA_INDEX = CCTPV2_MESSAGE_BODY_INDEX + 228;
 
 	uint256 internal constant GAS_LIMIT_FEE_MANAGER = 1000000;
 
@@ -419,13 +417,13 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes memory cctpMsg
 	) internal pure returns (BridgePayload memory) {
 		return BridgePayload({
-			payloadType: cctpMsg.toUint8(HOOK_DATA_INDEX),
-			destAddr: cctpMsg.toBytes32(HOOK_DATA_INDEX + 1),
-			gasDrop: cctpMsg.toUint64(HOOK_DATA_INDEX + 33),
-			redeemFee: cctpMsg.toUint64(HOOK_DATA_INDEX + 41),
-			referrerAddr: cctpMsg.toBytes32(HOOK_DATA_INDEX + 49),
-			referrerBps: cctpMsg.toUint8(HOOK_DATA_INDEX + 81),
-			customPayload: cctpMsg.toBytes32(HOOK_DATA_INDEX + 82)
+			payloadType: cctpMsg.toUint8(0),
+			destAddr: cctpMsg.toBytes32(1),
+			gasDrop: cctpMsg.toUint64(33),
+			redeemFee: cctpMsg.toUint64(41),
+			referrerAddr: cctpMsg.toBytes32(49),
+			referrerBps: cctpMsg.toUint8(81),
+			customPayload: cctpMsg.toBytes32(82)
 		});
 	}
 
@@ -445,16 +443,16 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes memory cctpMsg
 	) internal pure returns (OrderPayload memory) {
 		return OrderPayload({
-			payloadType: cctpMsg.toUint8(HOOK_DATA_INDEX),
-			destAddr: cctpMsg.toBytes32(HOOK_DATA_INDEX + 1),
-			tokenOut: cctpMsg.toBytes32(HOOK_DATA_INDEX + 33),
-			amountOutMin: cctpMsg.toUint64(HOOK_DATA_INDEX + 65),
-			gasDrop: cctpMsg.toUint64(HOOK_DATA_INDEX + 73),
-			redeemFee: cctpMsg.toUint64(HOOK_DATA_INDEX + 81),
-			refundFee: cctpMsg.toUint64(HOOK_DATA_INDEX + 89),
-			deadline: cctpMsg.toUint64(HOOK_DATA_INDEX + 97),
-			referrerAddr: cctpMsg.toBytes32(HOOK_DATA_INDEX + 105),
-			referrerBps: cctpMsg.toUint8(HOOK_DATA_INDEX + 137)
+			payloadType: cctpMsg.toUint8(0),
+			destAddr: cctpMsg.toBytes32(1),
+			tokenOut: cctpMsg.toBytes32(33),
+			amountOutMin: cctpMsg.toUint64(65),
+			gasDrop: cctpMsg.toUint64(73),
+			redeemFee: cctpMsg.toUint64(81),
+			refundFee: cctpMsg.toUint64(89),
+			deadline: cctpMsg.toUint64(97),
+			referrerAddr: cctpMsg.toBytes32(105),
+			referrerBps: cctpMsg.toUint8(137)
 		});
 	}
 
