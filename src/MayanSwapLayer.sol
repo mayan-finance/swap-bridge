@@ -188,8 +188,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes memory cctpMsg,
 		bytes memory cctpSigs
 	) external nonReentrant payable {
-		bytes memory payload = wormhole.parseVM(encodedVM);
-		BridgePayload memory bridgePayload = recreateBridgePayload(payload);
+		IWormhole.VM memory vm = wormhole.parseVM(encodedVM);
+		BridgePayload memory bridgePayload = recreateBridgePayload(vm.payload);
 
 		if (bridgePayload.payloadType != 1 && bridgePayload.payloadType != 2) {
 			revert InvalidPayloadType();
@@ -246,8 +246,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		address swapProtocol,
 		bytes memory swapData
 	) external nonReentrant payable {
-		bytes memory payload = wormhole.parseVM(encodedVM);
-		OrderPayload memory orderPayload = recreateOrderPayload(payload);
+		IWormhole.VM memory vm = wormhole.parseVM(encodedVM);
+		OrderPayload memory orderPayload = recreateOrderPayload(vm.payload);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
 		}
@@ -333,8 +333,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 	) external nonReentrant payable {
 		uint256 amount = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
 		
-		bytes memory payload = wormhole.parseVM(encodedVM);
-		OrderPayload memory orderPayload = recreateOrderPayload(payload);
+		IWormhole.VM memory vm = wormhole.parseVM(encodedVM);
+		OrderPayload memory orderPayload = recreateOrderPayload(vm.payload);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
 		}
@@ -414,16 +414,16 @@ contract MayanSwapLayer is ReentrancyGuard {
 	}
 
 	function recreateBridgePayload(
-		bytes memory cctpMsg
+		bytes memory payload
 	) internal pure returns (BridgePayload memory) {
 		return BridgePayload({
-			payloadType: cctpMsg.toUint8(0),
-			destAddr: cctpMsg.toBytes32(1),
-			gasDrop: cctpMsg.toUint64(33),
-			redeemFee: cctpMsg.toUint64(41),
-			referrerAddr: cctpMsg.toBytes32(49),
-			referrerBps: cctpMsg.toUint8(81),
-			customPayload: cctpMsg.toBytes32(82)
+			payloadType: payload.toUint8(0),
+			destAddr: payload.toBytes32(1),
+			gasDrop: payload.toUint64(33),
+			redeemFee: payload.toUint64(41),
+			referrerAddr: payload.toBytes32(49),
+			referrerBps: payload.toUint8(81),
+			customPayload: payload.toBytes32(82)
 		});
 	}
 
@@ -440,19 +440,19 @@ contract MayanSwapLayer is ReentrancyGuard {
 	}
 
 	function recreateOrderPayload(
-		bytes memory cctpMsg
+		bytes memory payload
 	) internal pure returns (OrderPayload memory) {
 		return OrderPayload({
-			payloadType: cctpMsg.toUint8(0),
-			destAddr: cctpMsg.toBytes32(1),
-			tokenOut: cctpMsg.toBytes32(33),
-			amountOutMin: cctpMsg.toUint64(65),
-			gasDrop: cctpMsg.toUint64(73),
-			redeemFee: cctpMsg.toUint64(81),
-			refundFee: cctpMsg.toUint64(89),
-			deadline: cctpMsg.toUint64(97),
-			referrerAddr: cctpMsg.toBytes32(105),
-			referrerBps: cctpMsg.toUint8(137)
+			payloadType: payload.toUint8(0),
+			destAddr: payload.toBytes32(1),
+			tokenOut: payload.toBytes32(33),
+			amountOutMin: payload.toUint64(65),
+			gasDrop: payload.toUint64(73),
+			redeemFee: payload.toUint64(81),
+			refundFee: payload.toUint64(89),
+			deadline: payload.toUint64(97),
+			referrerAddr: payload.toBytes32(105),
+			referrerBps: payload.toUint8(137)
 		});
 	}
 
