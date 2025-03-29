@@ -55,6 +55,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 	error AlreadySet();
 	error UnauthorizedSwapProtocol();
 	error UnauthorizedMsgSender();
+	error InsufficientWormholeFee();
 
 	struct BridgePayload {
 		uint8 payloadType;
@@ -383,7 +384,12 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes32 redeemer,
 		bytes memory redeemerMessage
 	) internal {
-		tokenRouter.placeMarketOrder(
+		uint256 fee = wormhole.messageFee();
+		if (msg.value < fee) {
+			revert InsufficientWormholeFee();
+		}
+
+		tokenRouter.placeMarketOrder{value: fee}(
 			amountIn,
 			destDomain,
 			redeemer,
