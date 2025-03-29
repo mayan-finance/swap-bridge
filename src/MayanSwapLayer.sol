@@ -33,13 +33,10 @@ contract MayanSwapLayer is ReentrancyGuard {
 
 	uint8 internal constant ETH_DECIMALS = 18;
 
-	uint256 internal constant CCTPV2_SOURCE_DOMAIN_INDEX = 4;
-	uint256 internal constant CCTPV2_NONCE_INDEX = 12;
-
 	uint256 internal constant GAS_LIMIT_FEE_MANAGER = 1000000;
 
-	event OrderFulfilled(uint32 sourceDomain, bytes32 sourceNonce, uint256 amount);
-	event OrderRefunded(uint32 sourceDomain, bytes32 sourceNonce, uint256 amount);
+	event OrderFulfilled(bytes32 sender, uint16 senderChain, uint256 amount);
+	event OrderRefunded(bytes32 sender, uint16 senderChain, uint256 amount);
 
 	error Paused();
 	error Unauthorized();
@@ -66,7 +63,6 @@ contract MayanSwapLayer is ReentrancyGuard {
 		uint8 referrerBps;
 		bytes32 customPayload;
 	}
-	uint256 public constant BRIDGE_PAYLOAD_LENGTH = 114;
 
 	struct OrderPayload {
 		uint8 payloadType;
@@ -80,9 +76,6 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes32 referrerAddr;
 		uint8 referrerBps;
 	}
-	uint256 public constant ORDER_PAYLOAD_LENGTH = 138;
-
-	uint256 public constant PAYLOAD_OFFSET = 216;
 
 	modifier whenNotPaused() {
 		if (paused) {
@@ -188,9 +181,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes memory cctpMsg,
 		bytes memory cctpSigs
 	) external nonReentrant payable {
-		IWormhole.VM memory vm = wormhole.parseVM(encodedVM);
-		bytes memory payload = vm.payload.slice(PAYLOAD_OFFSET, BRIDGE_PAYLOAD_LENGTH);
-		BridgePayload memory bridgePayload = recreateBridgePayload(payload);
+		RedeemedFill memory redeemedFill = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
+		BridgePayload memory bridgePayload = recreateBridgePayload(redeemedFill.message);
 
 		if (bridgePayload.payloadType != 1 && bridgePayload.payloadType != 2) {
 			revert InvalidPayloadType();
@@ -201,13 +193,11 @@ contract MayanSwapLayer is ReentrancyGuard {
 			revert Unauthorized();
 		}
 
-		uint256 amount = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
-
-		if (bridgePayload.redeemFee > amount) {
+		if (bridgePayload.redeemFee > redeemedFill.amount) {
 			revert InvalidRedeemFee();
 		}
 
-		amount = amount - uint256(bridgePayload.redeemFee);
+		uint256 amount = redeemedFill.amount - uint256(bridgePayload.redeemFee);
 
 		uint8 referrerBps = bridgePayload.referrerBps > 100 ? 100 : bridgePayload.referrerBps;
 		uint8 protocolBps = safeCalcFastMCTPProtocolBps(
@@ -247,9 +237,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		address swapProtocol,
 		bytes memory swapData
 	) external nonReentrant payable {
-		IWormhole.VM memory vm = wormhole.parseVM(encodedVM);
-		bytes memory payload = vm.payload.slice(PAYLOAD_OFFSET, ORDER_PAYLOAD_LENGTH);
-		OrderPayload memory orderPayload = recreateOrderPayload(payload);
+		RedeemedFill memory redeemedFill = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
+		OrderPayload memory orderPayload = recreateOrderPayload(redeemedFill.message);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
 		}
@@ -270,13 +259,11 @@ contract MayanSwapLayer is ReentrancyGuard {
 			revert UnauthorizedMsgSender();
 		}
 
-		uint256 whLLAmount = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
-
 		if (orderPayload.redeemFee > 0) {
 			IERC20(localToken).safeTransfer(msg.sender, orderPayload.redeemFee);
 		}
 
-		whLLAmount = whLLAmount - uint256(orderPayload.redeemFee);
+		uint256 whLLAmount = redeemedFill.amount - uint256(orderPayload.redeemFee);
 
 		(uint256 referrerAmount, uint256 protocolAmount) = getFeeAmounts(orderPayload, whLLAmount);
 
@@ -325,7 +312,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 			revert InvalidAmountOut();
 		}
 
-		logFulfilled(cctpMsg, amountOut);
+		logFulfilled(redeemedFill, amountOut);
 	}
 
 	function refund(
@@ -333,11 +320,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes memory cctpMsg,
 		bytes memory cctpSigs
 	) external nonReentrant payable {
-		uint256 amount = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
-		
-		IWormhole.VM memory vm = wormhole.parseVM(encodedVM);
-		bytes memory payload = vm.payload.slice(PAYLOAD_OFFSET, ORDER_PAYLOAD_LENGTH);
-		OrderPayload memory orderPayload = recreateOrderPayload(payload);
+		RedeemedFill memory redeemedFill = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
+		OrderPayload memory orderPayload = recreateOrderPayload(redeemedFill.message);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
 		}
@@ -357,25 +341,23 @@ contract MayanSwapLayer is ReentrancyGuard {
 		}
 
 		IERC20(localToken).safeTransfer(msg.sender, orderPayload.refundFee);
-		IERC20(localToken).safeTransfer(destAddr, amount - orderPayload.refundFee);
+		IERC20(localToken).safeTransfer(destAddr, redeemedFill.amount - orderPayload.refundFee);
 
-		emit OrderRefunded(cctpMsg.toUint32(CCTPV2_SOURCE_DOMAIN_INDEX), cctpMsg.toBytes32(CCTPV2_NONCE_INDEX), amount);
+		emit OrderRefunded(redeemedFill.sender, redeemedFill.senderChain, redeemedFill.amount);
 	}
 
 	function receiveWormholeLL(
 		bytes memory encodedVM,
 		bytes memory cctpMsg,
 		bytes memory cctpSigs
-	) internal returns (uint256) {
-		uint256 amount = IERC20(localToken).balanceOf(address(this));
+	) internal returns (RedeemedFill memory) {
 		OrderResponse memory orderResponse = OrderResponse({
 			encodedWormholeMessage: encodedVM,
 			circleBridgeMessage: cctpMsg,
 			circleAttestation: cctpSigs
 		});
-		tokenRouter.redeemFill(orderResponse);
-		amount = IERC20(localToken).balanceOf(address(this)) - amount;
-		return amount;
+		RedeemedFill memory redeemedFill = tokenRouter.redeemFill(orderResponse);
+		return redeemedFill;
 	}
 
 	function sendWormholeLL(
@@ -417,8 +399,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		}
 	}
 
-	function logFulfilled(bytes memory cctpMsg, uint256 amount) internal {
-		emit OrderFulfilled(cctpMsg.toUint32(CCTPV2_SOURCE_DOMAIN_INDEX), cctpMsg.toBytes32(CCTPV2_NONCE_INDEX), amount);
+	function logFulfilled(RedeemedFill memory redeemedFill, uint256 amount) internal {
+		emit OrderFulfilled(redeemedFill.sender, redeemedFill.senderChain, amount);
 	}
 
 	function recreateBridgePayload(
