@@ -22,7 +22,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 	address public immutable localToken;
 	address public feeManager;
 
-	mapping(uint32 => bytes32) public domainToCaller;
+	mapping(uint16 => bytes32) public domainToCaller;
 
 	mapping(address => bool) public whitelistedSwapProtocols;
 	mapping(address => bool) public whitelistedMsgSenders;
@@ -65,6 +65,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 		uint8 referrerBps;
 		bytes32 customPayload;
 	}
+	uint256 public constant BRIDGE_PAYLOAD_LENGTH = 114;
 
 	struct OrderPayload {
 		uint8 payloadType;
@@ -78,6 +79,9 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes32 referrerAddr;
 		uint8 referrerBps;
 	}
+	uint256 public constant ORDER_PAYLOAD_LENGTH = 138;
+
+	uint256 public constant PAYLOAD_OFFSET = 216;
 
 	modifier whenNotPaused() {
 		if (paused) {
@@ -184,7 +188,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes memory cctpSigs
 	) external nonReentrant payable {
 		IWormhole.VM memory vm = wormhole.parseVM(encodedVM);
-		BridgePayload memory bridgePayload = recreateBridgePayload(vm.payload);
+		bytes memory payload = vm.payload.slice(PAYLOAD_OFFSET, BRIDGE_PAYLOAD_LENGTH);
+		BridgePayload memory bridgePayload = recreateBridgePayload(payload);
 
 		if (bridgePayload.payloadType != 1 && bridgePayload.payloadType != 2) {
 			revert InvalidPayloadType();
@@ -242,7 +247,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		bytes memory swapData
 	) external nonReentrant payable {
 		IWormhole.VM memory vm = wormhole.parseVM(encodedVM);
-		OrderPayload memory orderPayload = recreateOrderPayload(vm.payload);
+		bytes memory payload = vm.payload.slice(PAYLOAD_OFFSET, ORDER_PAYLOAD_LENGTH);
+		OrderPayload memory orderPayload = recreateOrderPayload(payload);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
 		}
@@ -329,7 +335,8 @@ contract MayanSwapLayer is ReentrancyGuard {
 		uint256 amount = receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
 		
 		IWormhole.VM memory vm = wormhole.parseVM(encodedVM);
-		OrderPayload memory orderPayload = recreateOrderPayload(vm.payload);
+		bytes memory payload = vm.payload.slice(PAYLOAD_OFFSET, ORDER_PAYLOAD_LENGTH);
+		OrderPayload memory orderPayload = recreateOrderPayload(payload);
 		if (orderPayload.payloadType != 3) {
 			revert InvalidPayloadType();
 		}
@@ -565,7 +572,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 			);
 	}
 
-	function getCaller(uint32 destDomain) internal view returns (bytes32 caller) {
+	function getCaller(uint16 destDomain) internal view returns (bytes32 caller) {
 		caller = domainToCaller[destDomain];
 		if (caller == bytes32(0)) {
 			revert CallerNotSet();
@@ -573,7 +580,7 @@ contract MayanSwapLayer is ReentrancyGuard {
 		return caller;
 	}
 
-	function setDomainCallers(uint32 domain, bytes32 caller) public {
+	function setDomainCallers(uint16 domain, bytes32 caller) public {
 		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
