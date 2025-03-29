@@ -11,7 +11,7 @@ import "./interfaces/wormhole-ll/ITokenRouter.sol";
 import "./interfaces/IWormhole.sol";
 import {OrderResponse} from "./interfaces/wormhole-ll/ITokenRouterTypes.sol";
 
-contract MayanSwapLayer is ReentrancyGuard {
+contract MayanShuttle is ReentrancyGuard {
     using SafeERC20 for IERC20;
     using BytesLib for bytes;
     using ExcessivelySafeCall for address;
@@ -100,6 +100,8 @@ contract MayanSwapLayer is ReentrancyGuard {
         bytes32 referrerAddress,
         uint8 referrerBps,
         uint8 payloadType,
+        uint64 whLLMaxFee,
+        uint32 whLLDeadline,
         bytes memory customPayload
     ) external nonReentrant whenNotPaused {
         if (redeemFee >= amountIn) {
@@ -138,13 +140,17 @@ contract MayanSwapLayer is ReentrancyGuard {
             amountIn,
             destDomain,
             getCaller(destDomain),
-            encodeBridgePayload(bridgePayload)
+            encodeBridgePayload(bridgePayload),
+            whLLMaxFee,
+            whLLDeadline
         );
     }
 
     function createOrder(
         uint64 amountIn,
         uint16 destDomain,
+        uint64 whLLMaxFee,
+        uint32 whLLDeadline,
         OrderPayload memory orderPayload
     ) external nonReentrant whenNotPaused {
         if (orderPayload.redeemFee >= amountIn) {
@@ -179,7 +185,9 @@ contract MayanSwapLayer is ReentrancyGuard {
             amountIn,
             destDomain,
             getCaller(destDomain),
-            encodeOrderPayload(orderPayload)
+            encodeOrderPayload(orderPayload),
+            whLLMaxFee,
+            whLLDeadline
         );
     }
 
@@ -442,18 +450,29 @@ contract MayanSwapLayer is ReentrancyGuard {
         uint64 amountIn,
         uint16 destDomain,
         bytes32 redeemer,
-        bytes memory redeemerMessage
+        bytes memory redeemerMessage,
+        uint64 whLLMaxFee,
+        uint32 whLLDeadline
     ) internal {
-        uint256 fee = wormhole.messageFee();
+        uint256 fee = wormhole.messageFee() * 2;
         if (msg.value < fee) {
             revert InsufficientWormholeFee();
         }
 
-        tokenRouter.placeMarketOrder{value: fee}(
+        // tokenRouter.placeMarketOrder{value: fee}(
+        //     amountIn,
+        //     destDomain,
+        //     redeemer,
+        //     redeemerMessage
+        // );
+
+        tokenRouter.placeFastMarketOrder{value: fee}(
             amountIn,
             destDomain,
             redeemer,
-            redeemerMessage
+            redeemerMessage,
+            whLLMaxFee,
+            whLLDeadline
         );
     }
 
