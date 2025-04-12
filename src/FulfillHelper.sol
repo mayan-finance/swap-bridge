@@ -14,7 +14,6 @@ contract FulfillHelper {
 	address public nextGuardian;
 	mapping(address => bool) public swapProtocols;
 	mapping(address => bool) public mayanProtocols;
-	mapping(address => address) public referrersToSwap;
 
 	struct FulfillParams {
 		bytes encodedVm;
@@ -47,10 +46,6 @@ contract FulfillHelper {
 	) external payable {
 		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
-		}
-		address referrerProtocol = referrersToSwap[swapProtocol];
-		if (referrerProtocol != address(0)) {
-			require(referrerProtocol == swapProtocol, 'Invalid swap protocol');
 		}
 		require(fulfillToken != address(0), 'Invalid fulfill token');
 		require(msg.value >= amountIn, 'Insufficient input value');
@@ -96,10 +91,6 @@ contract FulfillHelper {
 	) external payable {
 		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
-		}
-		address referrerProtocol = referrersToSwap[swapProtocol];
-		if (referrerProtocol != address(0)) {
-			require(referrerProtocol == swapProtocol, 'Invalid swap protocol');
 		}
 		uint256 amountBefore = IERC20(tokenIn).balanceOf(address(this));
 		pullTokenIn(tokenIn, amountIn, permitParams);
@@ -256,11 +247,6 @@ contract FulfillHelper {
 	function setMayanProtocol(address mayanProtocol, bool enabled) public {
 		require(msg.sender == guardian, 'only guardian');
 		mayanProtocols[mayanProtocol] = enabled;
-	}
-
-	function setReferrerToSwap(address referrer, address swapProtocol) public {
-		require(msg.sender == guardian, 'only guardian');
-		referrersToSwap[referrer] = swapProtocol;
 	}
 
 	receive() external payable {}  
