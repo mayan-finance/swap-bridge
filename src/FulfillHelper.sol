@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import "./interfaces/IFeeManager.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/IFulfill.sol";
 
 contract FulfillHelper {
 
@@ -13,16 +14,17 @@ contract FulfillHelper {
 	address public nextGuardian;
 	mapping(address => bool) public swapProtocols;
 	mapping(address => bool) public mayanProtocols;
+	mapping(address => address) public referrersToSwap;
+
+	struct FulfillParams {
+		bytes encodedVm;
+		OrderParams orderParams;
+		ExtraParams extraParams;
+		bytes32 recipient;
+		bool batch;
+	}
 
 	error UnsupportedProtocol();
-
-	struct PermitParams {
-		uint256 value;
-		uint256 deadline;
-		uint8 v;
-		bytes32 r;
-		bytes32 s;
-	}
 
 	constructor(address _guardian, address[] memory _swapProtocols, address[] memory _mayanProtocols) {
 		guardian = _guardian;
@@ -34,45 +36,51 @@ contract FulfillHelper {
 		}
 	}
 
-	function directFulfill(
-		address tokenIn,
-		uint256 amountIn,
-		address mayanProtocol,
-		bytes calldata mayanData,
-		PermitParams calldata permitParams
-	) external payable {
-		if (!mayanProtocols[mayanProtocol]) {
-			revert UnsupportedProtocol();
-		}
-		pullTokenIn(tokenIn, amountIn, permitParams);
-		maxApproveIfNeeded(tokenIn, mayanProtocol, amountIn);
-
-		(bool success, bytes memory returnedData) = mayanProtocol.call{value: msg.value}(mayanData);
-		require(success, string(returnedData));
-	}
-
 	function fulfillWithEth(
 		uint256 amountIn,
 		address fulfillToken,
 		address swapProtocol,
 		bytes calldata swapData,
 		address mayanProtocol,
-		bytes calldata mayanData
+		FulfillParams calldata params,
+		bytes32 orderHash
 	) external payable {
 		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
 		}
+		address referrerProtocol = referrersToSwap[swapProtocol];
+		if (referrerProtocol != address(0)) {
+			require(referrerProtocol == swapProtocol, 'Invalid swap protocol');
+		}
 		require(fulfillToken != address(0), 'Invalid fulfill token');
 		require(msg.value >= amountIn, 'Insufficient input value');
 		uint256 fulfillAmount = IERC20(fulfillToken).balanceOf(address(this));
-		(bool success, bytes memory returnedData) = swapProtocol.call{value: amountIn}(swapData);
-		require(success, string(returnedData));
+		(bool success,) = swapProtocol.call{value: amountIn}(swapData);
+		require(success, 'Swap call failed');
 		fulfillAmount = IERC20(fulfillToken).balanceOf(address(this)) - fulfillAmount;
 
-		bytes memory modifiedData = replaceFulfillAmount(mayanData, fulfillAmount);
 		maxApproveIfNeeded(fulfillToken, mayanProtocol, fulfillAmount);
-		(success, returnedData) = mayanProtocol.call{value: msg.value - amountIn}(modifiedData);
-		require(success, string(returnedData));
+		if (params.encodedVm.length > 0) {
+			IFulfill(mayanProtocol).fulfillOrder{value: msg.value - amountIn} (
+				fulfillAmount,
+				params.encodedVm,
+				params.orderParams,
+				params.extraParams,
+				params.recipient,
+				params.batch,
+				emptyPermit()
+			);
+		} else {
+			IFulfill(mayanProtocol).fulfillSimple{value: msg.value - amountIn} (
+				fulfillAmount,
+				orderHash,
+				params.orderParams,
+				params.extraParams,
+				params.recipient,
+				params.batch,
+				emptyPermit()
+			);
+		}
 	} 
 
 	function fulfillWithERC20(
@@ -82,11 +90,16 @@ contract FulfillHelper {
 		address swapProtocol,
 		bytes calldata swapData,
 		address mayanProtocol,
-		bytes calldata mayanData,
+		FulfillParams calldata params,
+		bytes32 orderHash,
 		PermitParams calldata permitParams
 	) external payable {
 		if (!swapProtocols[swapProtocol] || !mayanProtocols[mayanProtocol]) {
 			revert UnsupportedProtocol();
+		}
+		address referrerProtocol = referrersToSwap[swapProtocol];
+		if (referrerProtocol != address(0)) {
+			require(referrerProtocol == swapProtocol, 'Invalid swap protocol');
 		}
 		uint256 amountBefore = IERC20(tokenIn).balanceOf(address(this));
 		pullTokenIn(tokenIn, amountIn, permitParams);
@@ -99,8 +112,8 @@ contract FulfillHelper {
 			fulfillAmount = IERC20(fulfillToken).balanceOf(address(this));
 		}
 
-		(bool success, bytes memory returnedData) = swapProtocol.call(swapData);
-		require(success, string(returnedData));
+		(bool success,) = swapProtocol.call(swapData);
+		require(success, 'Swap call failed');
 
 		transferBackRemaining(tokenIn, amountBefore);
 
@@ -110,40 +123,63 @@ contract FulfillHelper {
 			fulfillAmount = IERC20(fulfillToken).balanceOf(address(this)) - fulfillAmount;
 		}
 
-		bytes memory modifiedData = replaceFulfillAmount(mayanData, fulfillAmount);
 		if (fulfillToken == address(0)) {
-			(success, returnedData) = mayanProtocol.call{value: msg.value + fulfillAmount}(modifiedData);
-			require(success, string(returnedData));
+			if (params.encodedVm.length > 0) {
+				IFulfill(mayanProtocol).fulfillOrder{value: msg.value + fulfillAmount}(
+					fulfillAmount,
+					params.encodedVm,
+					params.orderParams,
+					params.extraParams,
+					params.recipient,
+					params.batch,
+					emptyPermit()
+				);
+			} else {
+				IFulfill(mayanProtocol).fulfillSimple{value: msg.value + fulfillAmount}(
+					fulfillAmount,
+					orderHash,
+					params.orderParams,
+					params.extraParams,
+					params.recipient,
+					params.batch,
+					emptyPermit()
+				);
+			}
 		} else {
 			maxApproveIfNeeded(fulfillToken, mayanProtocol, fulfillAmount);
-			(success, returnedData) = mayanProtocol.call{value: msg.value}(modifiedData);
-			require(success, string(returnedData));
+			if (params.encodedVm.length > 0) {
+				IFulfill(mayanProtocol).fulfillOrder{value: msg.value}(
+					fulfillAmount,
+					params.encodedVm,
+					params.orderParams,
+					params.extraParams,
+					params.recipient,
+					params.batch,
+					emptyPermit()
+				);
+			} else {
+				IFulfill(mayanProtocol).fulfillSimple{value: msg.value}(
+					fulfillAmount,
+					orderHash,
+					params.orderParams,
+					params.extraParams,
+					params.recipient,
+					params.batch,
+					emptyPermit()
+				);
+			}
 		}
 	}
 
-	function replaceFulfillAmount(bytes calldata mayanData, uint256 fulfillAmount) internal pure returns(bytes memory) {
-		require(mayanData.length >= 36, "Mayan data too short");
-		bytes memory modifiedData = new bytes(mayanData.length);
-
-		// Copy the function selector
-		for (uint i = 0; i < 4; i++) {
-			modifiedData[i] = mayanData[i];
-		}
-
-		// Encode the amount and place it into the modified call data
-		// Starting from byte 4 to byte 35 (32 bytes for uint256)
-		bytes memory encodedAmount = abi.encode(fulfillAmount);
-		for (uint i = 0; i < 32; i++) {
-			modifiedData[i + 4] = encodedAmount[i];
-		}
-
-		// Copy the rest of the original data after the first argument
-		for (uint i = 36; i < mayanData.length; i++) {
-			modifiedData[i] = mayanData[i];
-		}
-
-		return modifiedData;
-	}	
+	function emptyPermit() internal pure returns (PermitParams memory) {
+		return PermitParams({
+			value: 0,
+			deadline: 0,
+			v: 0,
+			r: bytes32(0),
+			s: bytes32(0)
+		});
+	}
 
 	function transferBackRemaining(address token, uint256 amountBefore) internal {
 		uint256 remaining = IERC20(token).balanceOf(address(this));
@@ -220,7 +256,12 @@ contract FulfillHelper {
 	function setMayanProtocol(address mayanProtocol, bool enabled) public {
 		require(msg.sender == guardian, 'only guardian');
 		mayanProtocols[mayanProtocol] = enabled;
-	}	
+	}
+
+	function setReferrerToSwap(address referrer, address swapProtocol) public {
+		require(msg.sender == guardian, 'only guardian');
+		referrersToSwap[referrer] = swapProtocol;
+	}
 
 	receive() external payable {}  
 }
