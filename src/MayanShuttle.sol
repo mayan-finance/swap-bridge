@@ -773,14 +773,6 @@ contract MayanShuttle is ReentrancyGuard {
         payEth(to, amount, true);
     }
 
-    function rescueRedeem(
-        bytes memory encodedVM,
-        bytes memory cctpMsg,
-        bytes memory cctpSigs
-    ) public {
-        receiveWormholeLL(encodedVM, cctpMsg, cctpSigs);
-    }
-
     function setPause(bool _pause) public {
         if (msg.sender != guardian) {
             revert Unauthorized();
