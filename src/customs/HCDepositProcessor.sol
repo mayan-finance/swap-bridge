@@ -53,7 +53,7 @@ contract HCDepositProcessor is ReentrancyGuard {
 	address immutable fastMCTP;
 	address immutable hcBridge;
 	address immutable usdc;
-	address immutable feeCollector;
+	address public feeCollector;
 
 	uint256 constant MAX_GASDROP = 1_000_000_000_000_000; // 0.001 ETH
 
