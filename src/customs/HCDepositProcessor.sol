@@ -105,29 +105,30 @@ contract HCDepositProcessor is ReentrancyGuard {
 		permits[0] = deposit.permit;
 
 		uint256 amount = IERC20(usdc).balanceOf(address(this));
-		IFastMCTP(fastMCTP).redeem(cctpMsg, cctpSigs);
+		IFastMCTP(fastMCTP).redeem {value: msg.value} (cctpMsg, cctpSigs);
 		amount = IERC20(usdc).balanceOf(address(this)) - amount;
 
 		if (amount < deposit.permit.usd + deposit.relayerFee) {
 			IERC20(usdc).transfer(deposit.permit.user, amount);
 			return;
 		}
-
-		IERC20(usdc).transfer(msg.sender, deposit.relayerFee);
+		if (deposit.relayerFee > 0) {
+			IERC20(usdc).transfer(msg.sender, deposit.relayerFee);
+		}
 		IERC20(usdc).transfer(deposit.permit.user, deposit.permit.usd);
 		if (amount - deposit.relayerFee > deposit.permit.usd) {
 			IERC20(usdc).transfer(feeCollector, amount - deposit.relayerFee - deposit.permit.usd);
 		}
 
-		try IHCBridge(hcBridge).batchedDepositWithPermit(permits) {} catch {
-			uint256 gasDrop = deNormalizeAmount(bridgePayload.gasDrop, 18);
-			if (gasDrop > MAX_GASDROP) {
-				gasDrop = MAX_GASDROP;
+		uint256 gasDrop = deNormalizeAmount(bridgePayload.gasDrop, 18);
+		try IHCBridge(hcBridge).batchedDepositWithPermit(permits) {
+			if (gasDrop > 0) {
+				payable(msg.sender).call{value: gasDrop}('');
 			}
-			if (msg.value != gasDrop) {
-				revert InvalidGasDrop();
+		} catch {
+			if (gasDrop > 0) {
+				payable(deposit.permit.user).call{value: gasDrop}('');
 			}
-			payable(deposit.permit.user).call{value: gasDrop}('');
 		}
 	}
 
@@ -150,29 +151,30 @@ contract HCDepositProcessor is ReentrancyGuard {
 		permits[0] = deposit.permit;
 
 		uint256 amount = IERC20(usdc).balanceOf(address(this));
-		IMayanCircle(mayanCricle).redeemWithFee(cctpMsg, cctpSigs, encodedVm, bridgeParams);
+		IMayanCircle(mayanCricle).redeemWithFee {value: msg.value} (cctpMsg, cctpSigs, encodedVm, bridgeParams);
 		amount = IERC20(usdc).balanceOf(address(this)) - amount;
 
 		if (amount < deposit.permit.usd + deposit.relayerFee) {
 			IERC20(usdc).transfer(deposit.permit.user, amount);
 			return;
 		}
-
-		IERC20(usdc).transfer(msg.sender, deposit.relayerFee);
+		if (deposit.relayerFee > 0) {
+			IERC20(usdc).transfer(msg.sender, deposit.relayerFee);
+		}
 		IERC20(usdc).transfer(deposit.permit.user, deposit.permit.usd);
 		if (amount - deposit.relayerFee > deposit.permit.usd) {
 			IERC20(usdc).transfer(feeCollector, amount - deposit.relayerFee - deposit.permit.usd);
 		}
 
-		try IHCBridge(hcBridge).batchedDepositWithPermit(permits) {} catch {
-			uint256 gasDrop = deNormalizeAmount(bridgeParams.gasDrop, 18);
-			if (gasDrop > MAX_GASDROP) {
-				gasDrop = MAX_GASDROP;
+		uint256 gasDrop = deNormalizeAmount(bridgePayload.gasDrop, 18);
+		try IHCBridge(hcBridge).batchedDepositWithPermit(permits) {
+			if (gasDrop > 0) {
+				payable(msg.sender).call{value: gasDrop}('');
 			}
-			if (msg.value != gasDrop) {
-				revert InvalidGasDrop();
+		} catch {
+			if (gasDrop > 0) {
+				payable(deposit.permit.user).call{value: gasDrop}('');
 			}
-			payable(deposit.permit.user).call{value: gasDrop}('');
 		}
 	}
 
