@@ -53,6 +53,7 @@ contract HCDepositProcessor is ReentrancyGuard {
 	address immutable fastMCTP;
 	address immutable hcBridge;
 	address immutable usdc;
+	address immutable feeCollector;
 
 	uint256 constant MAX_GASDROP = 1_000_000_000_000_000; // 0.001 ETH
 
@@ -72,6 +73,7 @@ contract HCDepositProcessor is ReentrancyGuard {
 		fastMCTP = _fastMCTP;
 		hcBridge = _hcBridge;
 		usdc = _usdc;
+		feeCollector = msg.sender;
 	}
 
 	function fastRedeemAndDeposit(
@@ -98,7 +100,10 @@ contract HCDepositProcessor is ReentrancyGuard {
 		amount = IERC20(usdc).balanceOf(address(this)) - amount;
 
 		IERC20(usdc).transfer(msg.sender, bridgePayload.redeemFee);
-		IERC20(usdc).transfer(deposit.user, amount - bridgePayload.redeemFee);
+		IERC20(usdc).transfer(deposit.user, deposit.usd);
+		if (amount - bridgePayload.redeemFee > deposit.usd) {
+			IERC20(usdc).transfer(feeCollector, amount - bridgePayload.redeemFee - deposit.usd);
+		}
 
 		try IHCBridge(hcBridge).batchedDepositWithPermit(deposits) {} catch {
 			uint256 gasDrop = deNormalizeAmount(bridgePayload.gasDrop, 18);
@@ -135,7 +140,10 @@ contract HCDepositProcessor is ReentrancyGuard {
 		amount = IERC20(usdc).balanceOf(address(this)) - amount;
 
 		IERC20(usdc).transfer(msg.sender, bridgeParams.redeemFee);
-		IERC20(usdc).transfer(deposit.user, amount - bridgeParams.redeemFee);
+		IERC20(usdc).transfer(deposit.user, deposit.usd);
+		if (amount - bridgeParams.redeemFee > deposit.usd) {
+			IERC20(usdc).transfer(feeCollector, amount - bridgeParams.redeemFee - deposit.usd);
+		}
 
 		try IHCBridge(hcBridge).batchedDepositWithPermit(deposits) {} catch {
 			uint256 gasDrop = deNormalizeAmount(bridgeParams.gasDrop, 18);
@@ -166,7 +174,7 @@ contract HCDepositProcessor is ReentrancyGuard {
 
 	function decodeDepositPayload(bytes memory payload) internal pure returns (IHCBridge.DepositWithPermit memory) {
 		return IHCBridge.DepositWithPermit({
-			user: truncateAddress(payload.toBytes32(0)),
+			user: payload.toAddress(0),
 			usd: payload.toUint64(20),
 			deadline: payload.toUint64(28),
 			signature: IHCBridge.Signature({
@@ -189,5 +197,12 @@ contract HCDepositProcessor is ReentrancyGuard {
 			revert InvalidAddress();
 		}
 		return address(uint160(uint256(b)));
+	}
+
+	function setFeeCollector(address newFeeCollector) external {
+		if (msg.sender != feeCollector) {
+			revert Unauthorized();
+		}
+		feeCollector = newFeeCollector;
 	}
 }
