@@ -53,9 +53,17 @@ contract HCDepositProcessor is ReentrancyGuard {
 	address immutable fastMCTP;
 	address immutable hcBridge;
 	address immutable usdc;
+	address public guardian;
+	address public nextGuardian;
 	address public feeCollector;
 
 	uint256 constant MAX_GASDROP = 1_000_000_000_000_000; // 0.001 ETH
+
+
+	struct DepositPayload {
+		uint64 relayerFee;
+		IHCBridge.DepositWithPermit permit;
+	}
 
 	error InvalidAddress();
 	error IncompatiblePayload();
@@ -73,6 +81,7 @@ contract HCDepositProcessor is ReentrancyGuard {
 		fastMCTP = _fastMCTP;
 		hcBridge = _hcBridge;
 		usdc = _usdc;
+		guardian = msg.sender;
 		feeCollector = msg.sender;
 	}
 
@@ -91,25 +100,26 @@ contract HCDepositProcessor is ReentrancyGuard {
 		if (customPayloadHash != bridgePayload.customPayload) {
 			revert InvalidCustomPayload();
 		}
-		IHCBridge.DepositWithPermit memory deposit = decodeDepositPayload(customPayload);
-		IHCBridge.DepositWithPermit [] memory deposits = new IHCBridge.DepositWithPermit[](1);
-		deposits[0] = deposit;
+		DepositPayload memory deposit = decodeDepositPayload(customPayload);
+		IHCBridge.DepositWithPermit [] memory permits = new IHCBridge.DepositWithPermit[](1);
+		permits[0] = deposit.permit;
 
 		uint256 amount = IERC20(usdc).balanceOf(address(this));
 		IFastMCTP(fastMCTP).redeem(cctpMsg, cctpSigs);
 		amount = IERC20(usdc).balanceOf(address(this)) - amount;
 
-		if (amount < deposit.usd + bridgeParams.redeemFee) {
-			revert InsufficientAmount();
+		if (amount < deposit.permit.usd + deposit.relayerFee) {
+			IERC20(usdc).transfer(deposit.permit.user, amount);
+			return;
 		}
 
-		IERC20(usdc).transfer(msg.sender, bridgePayload.redeemFee);
-		IERC20(usdc).transfer(deposit.user, deposit.usd);
-		if (amount - bridgePayload.redeemFee > deposit.usd) {
-			IERC20(usdc).transfer(feeCollector, amount - bridgePayload.redeemFee - deposit.usd);
+		IERC20(usdc).transfer(msg.sender, deposit.relayerFee);
+		IERC20(usdc).transfer(deposit.permit.user, deposit.permit.usd);
+		if (amount - deposit.relayerFee > deposit.permit.usd) {
+			IERC20(usdc).transfer(feeCollector, amount - deposit.relayerFee - deposit.permit.usd);
 		}
 
-		try IHCBridge(hcBridge).batchedDepositWithPermit(deposits) {} catch {
+		try IHCBridge(hcBridge).batchedDepositWithPermit(permits) {} catch {
 			uint256 gasDrop = deNormalizeAmount(bridgePayload.gasDrop, 18);
 			if (gasDrop > MAX_GASDROP) {
 				gasDrop = MAX_GASDROP;
@@ -117,7 +127,7 @@ contract HCDepositProcessor is ReentrancyGuard {
 			if (msg.value != gasDrop) {
 				revert InvalidGasDrop();
 			}
-			payable(deposit.user).call{value: gasDrop}('');
+			payable(deposit.permit.user).call{value: gasDrop}('');
 		}
 	}
 
@@ -135,25 +145,26 @@ contract HCDepositProcessor is ReentrancyGuard {
 			revert InvalidCustomPayload();
 		}
 
-		IHCBridge.DepositWithPermit memory deposit = decodeDepositPayload(customPayload);
-		IHCBridge.DepositWithPermit [] memory deposits = new IHCBridge.DepositWithPermit[](1);
-		deposits[0] = deposit;
+		DepositPayload memory deposit = decodeDepositPayload(customPayload);
+		IHCBridge.DepositWithPermit [] memory permits = new IHCBridge.DepositWithPermit[](1);
+		permits[0] = deposit.permit;
 
 		uint256 amount = IERC20(usdc).balanceOf(address(this));
 		IMayanCircle(mayanCricle).redeemWithFee(cctpMsg, cctpSigs, encodedVm, bridgeParams);
 		amount = IERC20(usdc).balanceOf(address(this)) - amount;
 
-		if (amount < deposit.usd + bridgeParams.redeemFee) {
-			revert InsufficientAmount();
+		if (amount < deposit.permit.usd + deposit.relayerFee) {
+			IERC20(usdc).transfer(deposit.permit.user, amount);
+			return;
 		}
 
-		IERC20(usdc).transfer(msg.sender, bridgeParams.redeemFee);
-		IERC20(usdc).transfer(deposit.user, deposit.usd);
-		if (amount - bridgeParams.redeemFee > deposit.usd) {
-			IERC20(usdc).transfer(feeCollector, amount - bridgeParams.redeemFee - deposit.usd);
+		IERC20(usdc).transfer(msg.sender, deposit.relayerFee);
+		IERC20(usdc).transfer(deposit.permit.user, deposit.permit.usd);
+		if (amount - deposit.relayerFee > deposit.permit.usd) {
+			IERC20(usdc).transfer(feeCollector, amount - deposit.relayerFee - deposit.permit.usd);
 		}
 
-		try IHCBridge(hcBridge).batchedDepositWithPermit(deposits) {} catch {
+		try IHCBridge(hcBridge).batchedDepositWithPermit(permits) {} catch {
 			uint256 gasDrop = deNormalizeAmount(bridgeParams.gasDrop, 18);
 			if (gasDrop > MAX_GASDROP) {
 				gasDrop = MAX_GASDROP;
@@ -161,7 +172,7 @@ contract HCDepositProcessor is ReentrancyGuard {
 			if (msg.value != gasDrop) {
 				revert InvalidGasDrop();
 			}
-			payable(deposit.user).call{value: gasDrop}('');
+			payable(deposit.permit.user).call{value: gasDrop}('');
 		}
 	}
 
@@ -180,15 +191,18 @@ contract HCDepositProcessor is ReentrancyGuard {
 		});
 	}
 
-	function decodeDepositPayload(bytes memory payload) internal pure returns (IHCBridge.DepositWithPermit memory) {
-		return IHCBridge.DepositWithPermit({
-			user: payload.toAddress(0),
-			usd: payload.toUint64(20),
-			deadline: payload.toUint64(28),
-			signature: IHCBridge.Signature({
-				r: payload.toUint256(36),
-				s: payload.toUint256(68),
-				v: payload.toUint8(100)
+	function decodeDepositPayload(bytes memory payload) internal pure returns (DepositPayload memory) {
+		return DepositPayload ({
+			relayerFee: payload.toUint64(0),
+			permit: IHCBridge.DepositWithPermit({
+				user: payload.toAddress(8),
+				usd: payload.toUint64(28),
+				deadline: payload.toUint64(36),
+				signature: IHCBridge.Signature({
+					r: payload.toUint256(44),
+					s: payload.toUint256(76),
+					v: payload.toUint8(108)
+				})
 			})
 		});
 	}
@@ -208,9 +222,39 @@ contract HCDepositProcessor is ReentrancyGuard {
 	}
 
 	function setFeeCollector(address newFeeCollector) external {
-		if (msg.sender != feeCollector) {
+		if (msg.sender != guardian) {
 			revert Unauthorized();
 		}
 		feeCollector = newFeeCollector;
 	}
+
+	function rescueToken(address token, uint256 amount, address to) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		IERC20(token).safeTransfer(to, amount);
+	}
+
+	function rescueEth(uint256 amount, address payable to) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		payable(to).call{value: amount}('');
+	}
+
+	function changeGuardian(address newGuardian) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		nextGuardian = newGuardian;
+	}
+
+	function claimGuardian() public {
+		if (msg.sender != nextGuardian) {
+			revert Unauthorized();
+		}
+		guardian = nextGuardian;
+	}
+
+	receive() external payable {}	
 }
