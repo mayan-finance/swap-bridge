@@ -99,6 +99,10 @@ contract HCDepositProcessor is ReentrancyGuard {
 		IFastMCTP(fastMCTP).redeem(cctpMsg, cctpSigs);
 		amount = IERC20(usdc).balanceOf(address(this)) - amount;
 
+		if (amount < deposit.usd + bridgeParams.redeemFee) {
+			revert InsufficientAmount();
+		}
+
 		IERC20(usdc).transfer(msg.sender, bridgePayload.redeemFee);
 		IERC20(usdc).transfer(deposit.user, deposit.usd);
 		if (amount - bridgePayload.redeemFee > deposit.usd) {
@@ -138,6 +142,10 @@ contract HCDepositProcessor is ReentrancyGuard {
 		uint256 amount = IERC20(usdc).balanceOf(address(this));
 		IMayanCircle(mayanCricle).redeemWithFee(cctpMsg, cctpSigs, encodedVm, bridgeParams);
 		amount = IERC20(usdc).balanceOf(address(this)) - amount;
+
+		if (amount < deposit.usd + bridgeParams.redeemFee) {
+			revert InsufficientAmount();
+		}
 
 		IERC20(usdc).transfer(msg.sender, bridgeParams.redeemFee);
 		IERC20(usdc).transfer(deposit.user, deposit.usd);
