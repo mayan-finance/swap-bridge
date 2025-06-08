@@ -25,7 +25,7 @@ interface IMayanCircle {
 		bytes memory cctpSigs,
 		bytes memory encodedVm,
 		BridgeWithFeeParams memory bridgeParams
-	) external;
+	) external payable;
 }
 
 interface IFastMCTP {
@@ -42,7 +42,7 @@ interface IFastMCTP {
 	function redeem(
 		bytes memory cctpMsg,
 		bytes memory cctpSigs
-	) external;
+	) external payable;
 }
 
 contract HCDepositProcessor is ReentrancyGuard {
@@ -166,7 +166,7 @@ contract HCDepositProcessor is ReentrancyGuard {
 			IERC20(usdc).transfer(feeCollector, amount - deposit.relayerFee - deposit.permit.usd);
 		}
 
-		uint256 gasDrop = deNormalizeAmount(bridgePayload.gasDrop, 18);
+		uint256 gasDrop = deNormalizeAmount(bridgeParams.gasDrop, 18);
 		try IHCBridge(hcBridge).batchedDepositWithPermit(permits) {
 			if (gasDrop > 0) {
 				payable(msg.sender).call{value: gasDrop}('');
