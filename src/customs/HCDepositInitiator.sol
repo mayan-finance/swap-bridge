@@ -69,7 +69,6 @@ contract HCDepositInitiator is ReentrancyGuard {
 		address tokenIn,
 		uint256 amountIn,
 		address trader,
-		uint64 redeemFee,
 		uint256 circleMaxFee,
 		uint64 gasDrop,
 		bytes32 referrerAddress,
@@ -83,7 +82,7 @@ contract HCDepositInitiator is ReentrancyGuard {
 		
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 
-		uint256 effectiveAmount = depositPayload.permit.usd + redeemFee + circleMaxFee;
+		uint256 effectiveAmount = depositPayload.permit.usd + depositPayload.relayerFee + circleMaxFee;
 		if (amountIn < effectiveAmount) {
 			revert InsufficientAmount();
 		}
@@ -95,7 +94,7 @@ contract HCDepositInitiator is ReentrancyGuard {
 		IFastMCTP(fastMCTP).bridge(
 			tokenIn,
 			effectiveAmount,
-			redeemFee,
+			0,
 			circleMaxFee,
 			gasDrop,
 			hcProcessor,
@@ -112,7 +111,6 @@ contract HCDepositInitiator is ReentrancyGuard {
 		address tokenIn,
 		uint256 amountIn,
 		address trader,
-		uint64 redeemFee,
 		uint64 gasDrop,
 		DepositPayload calldata depositPayload
 	) external nonReentrant {
@@ -121,7 +119,7 @@ contract HCDepositInitiator is ReentrancyGuard {
 		
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 
-		uint256 effectiveAmount = depositPayload.permit.usd + redeemFee;
+		uint256 effectiveAmount = depositPayload.permit.usd + depositPayload.relayerFee;
 		if (amountIn < effectiveAmount) {
 			revert InsufficientAmount();
 		}
@@ -135,7 +133,7 @@ contract HCDepositInitiator is ReentrancyGuard {
 		IMayanCircle(mayanCircle).bridgeWithFee(
 			tokenIn,
 			effectiveAmount,
-			redeemFee,
+			0,
 			gasDrop,
 			hcProcessor,
 			hcDomain,
