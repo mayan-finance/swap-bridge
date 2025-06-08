@@ -17,7 +17,7 @@ interface IMayanCircle {
 		bytes32 destAddr,
 		uint32 destDomain,
 		uint8 payloadType,
-		bytes memory customPayload
+		bytes memory depositPayload
 	) external payable returns (uint64 sequence);
 }
 
@@ -34,7 +34,7 @@ interface IFastMCTP {
 		uint8 referrerBps,
 		uint8 payloadType,
 		uint32 minFinalityThreshold,
-		bytes memory customPayload
+		bytes memory depositPayload
 	) external;
 }
 
@@ -54,6 +54,11 @@ contract HCDepositInitiator is ReentrancyGuard {
 	address public guardian;
 	address public nextGuardian;
 
+	struct DepositPayload {
+		uint64 relayerFee;
+		IHCBridge.DepositWithPermit permit;
+	}
+
 	constructor(address _hcProcessor, address _usdc) {
 		guardian = msg.sender;
 		hcProcessor = bytes32(uint256(uint160(_hcProcessor)));
@@ -71,14 +76,14 @@ contract HCDepositInitiator is ReentrancyGuard {
 		uint8 referrerBps,
 		uint8 payloadType,
 		uint32 minFinalityThreshold,
-		IHCBridge.DepositWithPermit calldata customPayload
+		DepositPayload calldata depositPayload
 	) external nonReentrant {
 		require(fastMCTP != address(0), "FastMCTP not enabled");
 		require(tokenIn == usdc, "Only USDC supported");
 		
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 
-		uint256 effectiveAmount = customPayload.usd + redeemFee + circleMaxFee;
+		uint256 effectiveAmount = depositPayload.permit.usd + redeemFee + circleMaxFee;
 		if (amountIn < effectiveAmount) {
 			revert InsufficientAmount();
 		}
@@ -99,7 +104,7 @@ contract HCDepositInitiator is ReentrancyGuard {
 			referrerBps,
 			payloadType,
 			minFinalityThreshold,
-			encodeDepositPayload(customPayload)
+			encodeDepositPayload(depositPayload)
 		);
 	}
 
@@ -109,14 +114,14 @@ contract HCDepositInitiator is ReentrancyGuard {
 		address trader,
 		uint64 redeemFee,
 		uint64 gasDrop,
-		IHCBridge.DepositWithPermit calldata customPayload
+		DepositPayload calldata depositPayload
 	) external nonReentrant {
 		require(mayanCircle != address(0), "FastMCTP not enabled");
 		require(tokenIn == usdc, "Only USDC supported");
 		
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 
-		uint256 effectiveAmount = customPayload.usd + redeemFee;
+		uint256 effectiveAmount = depositPayload.permit.usd + redeemFee;
 		if (amountIn < effectiveAmount) {
 			revert InsufficientAmount();
 		}
@@ -135,18 +140,19 @@ contract HCDepositInitiator is ReentrancyGuard {
 			hcProcessor,
 			hcDomain,
 			2, // payloadType
-			encodeDepositPayload(customPayload)
+			encodeDepositPayload(depositPayload)
 		);
 	}
 
-	function encodeDepositPayload(IHCBridge.DepositWithPermit calldata d) internal pure returns (bytes memory) {
+	function encodeDepositPayload(DepositPayload calldata dp) internal pure returns (bytes memory) {
 		return abi.encodePacked(
-			d.user,
-			d.usd,
-			d.deadline,
-			d.signature.r,
-			d.signature.s,
-			d.signature.v
+			dp.relayerFee,
+			dp.permit.user,
+			dp.permit.usd,
+			dp.permit.deadline,
+			dp.permit.signature.r,
+			dp.permit.signature.s,
+			dp.permit.signature.v
 		);
 	}
 
@@ -192,5 +198,5 @@ contract HCDepositInitiator is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		guardian = nextGuardian;
-	}	
+	}
 }
