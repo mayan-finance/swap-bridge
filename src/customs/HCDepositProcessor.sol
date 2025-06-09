@@ -121,12 +121,13 @@ contract HCDepositProcessor is ReentrancyGuard {
 		}
 
 		uint256 gasDrop = deNormalizeAmount(bridgePayload.gasDrop, 18);
-		try IHCBridge(hcBridge).batchedDepositWithPermit(permits) {
-			if (gasDrop > 0) {
+		uint256 userBalance = IERC20(usdc).balanceOf(deposit.permit.user);
+
+		IHCBridge(hcBridge).batchedDepositWithPermit(permits);
+		if (gasDrop > 0) {
+			if (IERC20(usdc).balanceOf(deposit.permit.user) < userBalance) { // If user balance decreased, it means the deposit was successful
 				payable(msg.sender).call{value: gasDrop}('');
-			}
-		} catch {
-			if (gasDrop > 0) {
+			} else {
 				payable(deposit.permit.user).call{value: gasDrop}('');
 			}
 		}
@@ -167,12 +168,13 @@ contract HCDepositProcessor is ReentrancyGuard {
 		}
 
 		uint256 gasDrop = deNormalizeAmount(bridgeParams.gasDrop, 18);
-		try IHCBridge(hcBridge).batchedDepositWithPermit(permits) {
-			if (gasDrop > 0) {
+		uint256 userBalance = IERC20(usdc).balanceOf(deposit.permit.user);
+
+		IHCBridge(hcBridge).batchedDepositWithPermit(permits);
+		if (gasDrop > 0) {
+			if (IERC20(usdc).balanceOf(deposit.permit.user) < userBalance) { // If user balance decreased, it means the deposit was successful
 				payable(msg.sender).call{value: gasDrop}('');
-			}
-		} catch {
-			if (gasDrop > 0) {
+			} else {
 				payable(deposit.permit.user).call{value: gasDrop}('');
 			}
 		}
