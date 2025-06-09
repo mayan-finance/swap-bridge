@@ -73,7 +73,6 @@ contract HCDepositInitiator is ReentrancyGuard {
 		uint64 gasDrop,
 		bytes32 referrerAddress,
 		uint8 referrerBps,
-		uint8 payloadType,
 		uint32 minFinalityThreshold,
 		DepositPayload calldata depositPayload
 	) external nonReentrant {
@@ -94,14 +93,14 @@ contract HCDepositInitiator is ReentrancyGuard {
 		IFastMCTP(fastMCTP).bridge(
 			tokenIn,
 			effectiveAmount,
-			0,
+			0, // redeemFee
 			circleMaxFee,
 			gasDrop,
 			hcProcessor,
 			hcDomain,
 			referrerAddress,
 			referrerBps,
-			payloadType,
+			2, // paylaodType
 			minFinalityThreshold,
 			encodeDepositPayload(depositPayload)
 		);
@@ -133,7 +132,7 @@ contract HCDepositInitiator is ReentrancyGuard {
 		IMayanCircle(mayanCircle).bridgeWithFee(
 			tokenIn,
 			effectiveAmount,
-			0,
+			0, // redeemFee
 			gasDrop,
 			hcProcessor,
 			hcDomain,
