@@ -74,6 +74,7 @@ contract HCDepositInitiator is ReentrancyGuard {
 		bytes32 referrerAddress,
 		uint8 referrerBps,
 		uint32 minFinalityThreshold,
+		uint256 bridgeAmount,
 		DepositPayload calldata depositPayload
 	) external nonReentrant {
 		require(fastMCTP != address(0), "FastMCTP not enabled");
@@ -81,18 +82,17 @@ contract HCDepositInitiator is ReentrancyGuard {
 		
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 
-		uint256 effectiveAmount = depositPayload.permit.usd + depositPayload.relayerFee + circleMaxFee;
-		if (amountIn < effectiveAmount) {
+		if (amountIn < bridgeAmount) {
 			revert InsufficientAmount();
 		}
-		if (amountIn > effectiveAmount) {
-			IERC20(tokenIn).safeTransfer(trader, amountIn - effectiveAmount);
+		if (amountIn > bridgeAmount) {
+			IERC20(tokenIn).safeTransfer(trader, amountIn - bridgeAmount);
 		}
 
-		maxApproveIfNeeded(usdc, fastMCTP, effectiveAmount);
+		maxApproveIfNeeded(usdc, fastMCTP, bridgeAmount);
 		IFastMCTP(fastMCTP).bridge(
 			tokenIn,
-			effectiveAmount,
+			bridgeAmount,
 			0, // redeemFee
 			circleMaxFee,
 			gasDrop,
@@ -111,6 +111,7 @@ contract HCDepositInitiator is ReentrancyGuard {
 		uint256 amountIn,
 		address trader,
 		uint64 gasDrop,
+		uint256 bridgeAmount,
 		DepositPayload calldata depositPayload
 	) external nonReentrant {
 		require(mayanCircle != address(0), "FastMCTP not enabled");
@@ -118,20 +119,18 @@ contract HCDepositInitiator is ReentrancyGuard {
 		
 		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
 
-		uint256 effectiveAmount = depositPayload.permit.usd + depositPayload.relayerFee;
-		if (amountIn < effectiveAmount) {
+		if (amountIn < bridgeAmount) {
 			revert InsufficientAmount();
 		}
-
-		if (amountIn > effectiveAmount) {
-			IERC20(tokenIn).safeTransfer(trader, amountIn - effectiveAmount);
+		if (amountIn > bridgeAmount) {
+			IERC20(tokenIn).safeTransfer(trader, amountIn - bridgeAmount);
 		}
 		
-		maxApproveIfNeeded(usdc, mayanCircle, effectiveAmount);
+		maxApproveIfNeeded(usdc, mayanCircle, bridgeAmount);
 
 		IMayanCircle(mayanCircle).bridgeWithFee(
 			tokenIn,
-			effectiveAmount,
+			bridgeAmount,
 			0, // redeemFee
 			gasDrop,
 			hcProcessor,
