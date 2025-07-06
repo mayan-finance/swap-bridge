@@ -9,48 +9,86 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/IWETH.sol";
 
 contract OnchainSwap is ReentrancyGuard {
+    using SafeERC20 for IERC20;
 
-	using SafeERC20 for IERC20;
+    error Unauthorized();
 
-	error Unauthorized();
+    event TokenTransferred(
+        address indexed token,
+        address indexed to,
+        uint256 amount,
+        bool unwrap
+    );
 
-	event ETHTransferred(address indexed to, uint256 amount);
-	event TokenTransferred(address indexed token, address indexed to, uint256 amount);
+    address public guardian;
+    address public nextGuardian;
 
-	address public guardian;
-	address public nextGuardian;
+    address public immutable ForwarderAddress;
+    IWETH public immutable WETH;
 
-	address public immutable ForwarderAddress;
-	IWETH public immutable WETH;
+    constructor(address _forwarderAddress, address _weth) {
+        ForwarderAddress = _forwarderAddress;
+        WETH = IWETH(_weth);
 
-	constructor(address _forwarderAddress, address _weth) {
-		ForwarderAddress = _forwarderAddress;
-		WETH = IWETH(_weth);
+        guardian = msg.sender;
+    }
 
-		guardian = msg.sender;
-	}
+    modifier onlyForwarder() {
+        if (msg.sender != ForwarderAddress) {
+            revert Unauthorized();
+        }
+        _;
+    }
 
-	modifier onlyForwarder() {
-		if (msg.sender != ForwarderAddress) {
-			revert Unauthorized();
-		}
-		_;
-	}
+    function transferToken(
+        address token,
+        uint256 amount,
+        address to,
+        bool unwrap
+    ) external nonReentrant onlyForwarder {
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 
-	function transferToken(address token, uint256 amount, address to, bool unwrap) nonReentrant external onlyForwarder {
-		if (unwrap) {
-			WETH.withdraw(amount);
-			payViaCall(to, amount);
-		} else {
-			IERC20(token).safeTransfer(to, amount);
-		}
-		emit TokenTransferred(token, to, amount);
-	}
+        if (unwrap && token == address(WETH)) {
+            WETH.withdraw(amount);
+            payViaCall(to, amount);
+        } else {
+            IERC20(token).safeTransfer(to, amount);
+        }
+        emit TokenTransferred(token, to, amount, unwrap);
+    }
 
-	function payViaCall(address to, uint256 amount) internal {
-		(bool success, ) = payable(to).call{value: amount}('');
-		require(success, 'payment failed');
-	}
+    function payViaCall(address to, uint256 amount) internal {
+        (bool success, ) = payable(to).call{value: amount}("");
+        require(success, "payment failed");
+    }
 
-	receive() external payable {}
+    function changeGuardian(address newGuardian) public {
+        if (msg.sender != guardian) {
+            revert Unauthorized();
+        }
+        nextGuardian = newGuardian;
+    }
+
+    function claimGuardian() public {
+        if (msg.sender != nextGuardian) {
+            revert Unauthorized();
+        }
+        guardian = nextGuardian;
+    }
+
+    function rescueETH(address to, uint256 amount) public {
+        if (msg.sender != guardian) {
+            revert Unauthorized();
+        }
+        payViaCall(to, amount);
+    }
+
+    function rescueToken(address token, address to, uint256 amount) public {
+        if (msg.sender != guardian) {
+            revert Unauthorized();
+        }
+        IERC20(token).safeTransfer(to, amount);
+    }
+
+    receive() external payable {}
 }
