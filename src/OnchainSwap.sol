@@ -6,6 +6,8 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
+import "./interfaces/IWETH.sol";
+
 contract OnchainSwap is ReentrancyGuard {
 
 	using SafeERC20 for IERC20;
@@ -15,10 +17,17 @@ contract OnchainSwap is ReentrancyGuard {
 	event ETHTransferred(address indexed to, uint256 amount);
 	event TokenTransferred(address indexed token, address indexed to, uint256 amount);
 
-	address public immutable ForwarderAddress;
+	address public guardian;
+	address public nextGuardian;
 
-	constructor(address _forwarderAddress) {
+	address public immutable ForwarderAddress;
+	IWETH public immutable WETH;
+
+	constructor(address _forwarderAddress, address _weth) {
 		ForwarderAddress = _forwarderAddress;
+		WETH = IWETH(_weth);
+
+		guardian = msg.sender;
 	}
 
 	modifier onlyForwarder() {
@@ -28,13 +37,13 @@ contract OnchainSwap is ReentrancyGuard {
 		_;
 	}
 
-	function transferETH(address to) nonReentrant external onlyForwarder payable {
-		payViaCall(to, msg.value);
-		emit ETHTransferred(to, msg.value);
-	}
-
-	function transferToken(address token, address to, uint256 amount) nonReentrant external onlyForwarder {
-		IERC20(token).safeTransfer(to, amount);
+	function transferToken(address token, uint256 amount, address to, bool unwrap) nonReentrant external onlyForwarder {
+		if (unwrap) {
+			WETH.withdraw(amount);
+			payViaCall(to, amount);
+		} else {
+			IERC20(token).safeTransfer(to, amount);
+		}
 		emit TokenTransferred(token, to, amount);
 	}
 
