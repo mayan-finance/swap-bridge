@@ -9,6 +9,7 @@ contract OnchainSwap {
 	using SafeERC20 for IERC20;
 
 	error Unauthorized();
+	error InvalidReferrerBps();
 
 	event TokenTransferred(address token, address to, uint256 amount);
 	event EthTransferred(address to, uint256 amount);
@@ -17,12 +18,10 @@ contract OnchainSwap {
 	address public nextGuardian;
 
 	address public immutable ForwarderAddress;
-	IWETH public immutable WETH;
+	uint8 public constant MAX_REFERRER_BPS = 100;
 
-	constructor(address _forwarderAddress, address _weth) {
+	constructor(address _forwarderAddress) {
 		ForwarderAddress = _forwarderAddress;
-		WETH = IWETH(_weth);
-
 		guardian = msg.sender;
 	}
 
@@ -40,6 +39,9 @@ contract OnchainSwap {
 		address referrerAddr,
 		uint8 referrerBps
 	) external onlyForwarder {
+		if (referrerBps > MAX_REFERRER_BPS) {
+			revert InvalidReferrerBps();
+		}
 		IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 		uint256 referrerFee = (amount * referrerBps) / 10000;
 		if (referrerFee > 0) {
@@ -54,6 +56,9 @@ contract OnchainSwap {
 		address referrerAddr,
 		uint8 referrerBps
 	) external payable onlyForwarder {
+		if (referrerBps > MAX_REFERRER_BPS) {
+			revert InvalidReferrerBps();
+		}
 		uint256 referrerFee = (msg.value * referrerBps) / 10000;
 		if (referrerFee > 0) {
 			payEth(referrerAddr, referrerFee);
