@@ -4,91 +4,96 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-import "./interfaces/IWETH.sol";
+contract OnchainSwap {
+	using SafeERC20 for IERC20;
 
-contract OnchainSwap is ReentrancyGuard {
-    using SafeERC20 for IERC20;
+	error Unauthorized();
 
-    error Unauthorized();
+	event TokenTransferred(address token, address to, uint256 amount);
+	event EthTransferred(address to, uint256 amount);
 
-    event TokenTransferred(
-        address indexed token,
-        address indexed to,
-        uint256 amount,
-        bool unwrap
-    );
+	address public guardian;
+	address public nextGuardian;
 
-    address public guardian;
-    address public nextGuardian;
+	address public immutable ForwarderAddress;
+	IWETH public immutable WETH;
 
-    address public immutable ForwarderAddress;
-    IWETH public immutable WETH;
+	constructor(address _forwarderAddress, address _weth) {
+		ForwarderAddress = _forwarderAddress;
+		WETH = IWETH(_weth);
 
-    constructor(address _forwarderAddress, address _weth) {
-        ForwarderAddress = _forwarderAddress;
-        WETH = IWETH(_weth);
+		guardian = msg.sender;
+	}
 
-        guardian = msg.sender;
-    }
+	modifier onlyForwarder() {
+		if (msg.sender != ForwarderAddress) {
+			revert Unauthorized();
+		}
+		_;
+	}
 
-    modifier onlyForwarder() {
-        if (msg.sender != ForwarderAddress) {
-            revert Unauthorized();
-        }
-        _;
-    }
+	function transferToken(
+		address token,
+		uint256 amount,
+		address to,
+		address referrerAddr,
+		uint8 referrerBps
+	) external onlyForwarder {
+		IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+		uint256 referrerFee = (amount * referrerBps) / 10000;
+		if (referrerFee > 0) {
+			IERC20(token).safeTransfer(referrerAddr, referrerFee);
+		}
+		IERC20(token).safeTransfer(to, amount - referrerFee);
+		emit TokenTransferred(token, to, amount - referrerFee);
+	}
 
-    function transferToken(
-        address token,
-        uint256 amount,
-        address to,
-        bool unwrap
-    ) external nonReentrant onlyForwarder {
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+	function transferEth(
+		address to,
+		address referrerAddr,
+		uint8 referrerBps
+	) external payable onlyForwarder {
+		uint256 referrerFee = (msg.value * referrerBps) / 10000;
+		if (referrerFee > 0) {
+			payEth(referrerAddr, referrerFee);
+		}
+		payEth(to, msg.value - referrerFee);
+		emit EthTransferred(to, msg.value - referrerFee);
+	}
 
-        if (unwrap && token == address(WETH)) {
-            WETH.withdraw(amount);
-            payViaCall(to, amount);
-        } else {
-            IERC20(token).safeTransfer(to, amount);
-        }
-        emit TokenTransferred(token, to, amount, unwrap);
-    }
+	function payEth(address to, uint256 amount) internal {
+		(bool success, ) = payable(to).call{value: amount}("");
+		require(success, "eth payment failed");
+	}
 
-    function payViaCall(address to, uint256 amount) internal {
-        (bool success, ) = payable(to).call{value: amount}("");
-        require(success, "payment failed");
-    }
+	function changeGuardian(address newGuardian) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		nextGuardian = newGuardian;
+	}
 
-    function changeGuardian(address newGuardian) public {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        nextGuardian = newGuardian;
-    }
+	function claimGuardian() public {
+		if (msg.sender != nextGuardian) {
+			revert Unauthorized();
+		}
+		guardian = nextGuardian;
+	}
 
-    function claimGuardian() public {
-        if (msg.sender != nextGuardian) {
-            revert Unauthorized();
-        }
-        guardian = nextGuardian;
-    }
+	function rescueETH(address to, uint256 amount) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		payEth(to, amount);
+	}
 
-    function rescueETH(address to, uint256 amount) public {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        payViaCall(to, amount);
-    }
+	function rescueToken(address token, address to, uint256 amount) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		IERC20(token).safeTransfer(to, amount);
+	}
 
-    function rescueToken(address token, address to, uint256 amount) public {
-        if (msg.sender != guardian) {
-            revert Unauthorized();
-        }
-        IERC20(token).safeTransfer(to, amount);
-    }
-
-    receive() external payable {}
+	receive() external payable {}
 }
