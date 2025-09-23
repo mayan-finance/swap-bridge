@@ -16,11 +16,8 @@ struct OrderParams {
 	uint64 cancelFee;
 	uint64 refundFee;
 	uint64 deadline;
-	uint16 penaltyPeriod;
 	uint8 referrerBps;
 	uint8 auctionMode;
-	uint64 baseBond;
-	uint64 perBpsBond;
 	bytes32 random;
 }
 
@@ -29,7 +26,7 @@ struct ExtraParams {
 	bytes32 tokenIn;
 	uint8 protocolBps;
 	bytes32 customPayloadHash;
-}	
+}
 
 struct PermitParams {
 	uint256 value;
@@ -52,13 +49,10 @@ struct Key {
 	uint64 cancelFee;
 	uint64 refundFee;
 	uint64 deadline;
-	uint16 penaltyPeriod;
 	bytes32 referrerAddr;
 	uint8 referrerBps;
 	uint8 protocolBps;
 	uint8 auctionMode;
-	uint64 baseBond;
-	uint64 perBpsBond;
 	bytes32 random;
 	bytes32 customPayloadHash;
 }
@@ -128,6 +122,7 @@ struct FulfillMsg {
 	bytes32 orderHash;
 	bytes32 driver;
 	uint64 promisedAmount;
+	uint16 penaltyPeriod;
 }
 
 struct TransferParams {

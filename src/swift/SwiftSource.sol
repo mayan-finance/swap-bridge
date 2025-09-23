@@ -23,7 +23,7 @@ contract SwiftSource is ReentrancyGuard {
 	using BytesLib for bytes;
 	using SignatureVerifier for bytes;
 
-	uint8 constant BPS_FEE_LIMIT = 100;
+	uint8 constant BPS_FEE_LIMIT = 200;
 	uint8 constant NATIVE_DECIMALS = 18;
 
 	IWormhole public immutable wormhole;
@@ -462,13 +462,10 @@ contract SwiftSource is ReentrancyGuard {
 			cancelFee: params.cancelFee,
 			refundFee: params.refundFee,
 			deadline: params.deadline,
-			penaltyPeriod: params.penaltyPeriod,
 			referrerAddr: params.referrerAddr,	
 			referrerBps: params.referrerBps,
 			protocolBps: protocolBps,
 			auctionMode: params.auctionMode,
-			baseBond: params.baseBond,
-			perBpsBond: params.perBpsBond,
 			random: params.random,
 			customPayloadHash: customPayloadHash
 		});
@@ -571,16 +568,13 @@ contract SwiftSource is ReentrancyGuard {
 			key.gasDrop,
 			key.cancelFee,
 			key.refundFee,
-			key.deadline,
-			key.penaltyPeriod
+			key.deadline
 		);
 		encoded = encoded.concat(abi.encodePacked(
 			key.referrerAddr,
 			key.referrerBps,
 			key.protocolBps,
 			key.auctionMode,
-			key.baseBond,
-			key.perBpsBond,
 			key.random,
 			key.customPayloadHash
 		));

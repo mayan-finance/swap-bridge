@@ -83,7 +83,7 @@ contract SwiftDest is ReentrancyGuard {
 			fulfillAmount = pullTokenIn(tokenOut, fulfillAmount, permit);
 		}
 
-		if (truncateAddress(fulfillMsg.driver) != tx.origin && block.timestamp <= params.deadline - params.penaltyPeriod) {
+		if (truncateAddress(fulfillMsg.driver) != tx.origin && block.timestamp <= params.deadline - fulfillMsg.penaltyPeriod) {
 			revert Unauthorized();
 		}
 
@@ -210,7 +210,7 @@ contract SwiftDest is ReentrancyGuard {
 		emit OrderCanceled(orderHash, sequence);
 	}
 
-	function postBatch(bytes32[] memory orderHashes, bool compressed) public payable returns (uint64 sequence) {
+	function postBatch(bytes32[] memory orderHashes) public payable returns (uint64 sequence) {
 		bytes memory encoded;
 		for(uint i=0; i<orderHashes.length; i++) {
 			bytes memory unlockMsg = unlockMsgs[orderHashes[i]];
@@ -221,12 +221,7 @@ contract SwiftDest is ReentrancyGuard {
 			delete unlockMsgs[orderHashes[i]];
 		}
 
-		bytes memory payload;
-		if (compressed) {
-			payload = abi.encodePacked(uint8(Action.COMPRESSED_UNLOCK), uint16(orderHashes.length), keccak256(encoded));
-		} else {
-			payload = abi.encodePacked(uint8(Action.BATCH_UNLOCK), uint16(orderHashes.length), encoded);
-		}
+		bytes memory payload = abi.encodePacked(uint8(Action.COMPRESSED_UNLOCK), uint16(orderHashes.length), keccak256(encoded));
 		
 		sequence = wormhole.publishMessage{
 			value : msg.value
@@ -365,13 +360,10 @@ contract SwiftDest is ReentrancyGuard {
 			cancelFee: params.cancelFee,
 			refundFee: params.refundFee,
 			deadline: params.deadline,
-			penaltyPeriod: params.penaltyPeriod,
 			referrerAddr: params.referrerAddr,	
 			referrerBps: params.referrerBps,
 			protocolBps: extraParams.protocolBps,
 			auctionMode: params.auctionMode,
-			baseBond: params.baseBond,
-			perBpsBond: params.perBpsBond,
 			random: params.random,
 			customPayloadHash: extraParams.customPayloadHash
 		});
@@ -395,6 +387,9 @@ contract SwiftDest is ReentrancyGuard {
 
 		fulfillMsg.driver = encoded.toBytes32(index);
 		index += 32;
+
+		fulfillMsg.penaltyPeriod = encoded.toUint16(index);
+		index += 2;
 	}
 
 	function encodeKey(Key memory key) internal pure returns (bytes memory encoded) {
@@ -410,17 +405,14 @@ contract SwiftDest is ReentrancyGuard {
 			key.gasDrop,
 			key.cancelFee,
 			key.refundFee,
-			key.deadline,
-			key.penaltyPeriod
+			key.deadline
 		);
 		encoded = encoded.concat(abi.encodePacked(
 			key.referrerAddr,
 			key.referrerBps,
 			key.protocolBps,
 			key.auctionMode,
-			key.baseBond,
-			key.perBpsBond,
-			key.random,
+			key.random,			
 			key.customPayloadHash
 		));
 	}
