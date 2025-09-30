@@ -548,6 +548,10 @@ contract MayanCircle is ReentrancyGuard {
 		(IWormhole.VM memory vm2, bool valid2, string memory reason2) = wormhole.parseAndVerifyVM(encodedVm2);
 		require(valid2, reason2);
 
+		if (vm2.emitterChainId != vm1.emitterChainId) {
+			revert InvalidEmitter();
+		}
+
 		validateEmitter(vm2.emitterAddress, vm2.emitterChainId);
 
 		refinedMsg.action = uint8(Action.UNLOCK_FEE_REFINE);
