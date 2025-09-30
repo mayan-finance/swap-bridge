@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -28,6 +28,7 @@ contract SwiftSource is ReentrancyGuard {
 
 	IWormhole public immutable wormhole;
 	IFeeManager public feeManager;
+	address public immutable rescueVault;
 	address public guardian;
 	address public nextGuardian;
 	bool public paused;
@@ -37,10 +38,11 @@ contract SwiftSource is ReentrancyGuard {
 	mapping(bytes32 => Order) public orders;
 	mapping(uint16 => bytes32) public emitters;
 
-	constructor(address _wormhole, address _feeManager) {
+	constructor(address _wormhole, address _feeManager, address _rescueVault) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
 		feeManager = IFeeManager(_feeManager);
+		rescueVault = _rescueVault;
 
 		domainSeparator = keccak256(abi.encode(
 			keccak256("EIP712Domain(string name,uint256 chainId,address verifyingContract)"),
@@ -657,6 +659,47 @@ contract SwiftSource is ReentrancyGuard {
 			permitParams.r,
 			permitParams.s
 		);
+	}
+
+	function rescue(bytes memory encodedVm) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		(IWormhole.VM memory vm, bool valid, string memory reason) = IWormhole(wormhole).parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+		if (vm.emitterChainId != 1) {
+			revert InvalidEmitterChain();
+		}
+		if (vm.emitterAddress != emitters[1]) {
+			revert InvalidEmitterAddress();
+		}
+
+		RescueMsg memory rescueMsg = parseRescuePayload(vm.payload);
+		orders[rescueMsg.orderHash].status = Status(rescueMsg.orderStatus);
+		if (rescueMsg.amount > 0) {
+			if (rescueMsg.token == address(0)) {
+				payEth(rescueVault, rescueMsg.amount, true);
+			} else {
+				IERC20(rescueMsg.token).safeTransfer(rescueVault, rescueMsg.amount);
+			}
+		}
+	}
+
+	function parseRescuePayload(bytes memory encoded) public pure returns (RescueMsg memory rescueMsg) {
+		uint index = 0;
+
+		rescueMsg.orderStatus = encoded.toUint8(index);
+		index += 1;
+
+		rescueMsg.orderHash = encoded.toBytes32(index);
+		index += 32;
+
+		rescueMsg.token = address(uint160(encoded.toUint256(index)));
+		index += 32;
+
+		rescueMsg.amount = encoded.toUint64(index);
+		index += 8;
 	}
 
 	function setPause(bool _pause) public {

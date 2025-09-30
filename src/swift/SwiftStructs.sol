@@ -135,3 +135,10 @@ struct SolverParams {
 	bytes32 recipient;
 	bytes32 driver;
 }
+
+struct RescueMsg {
+	uint8 orderStatus;
+	bytes32 orderHash;
+	address token;
+	uint64 amount;
+}
