@@ -130,3 +130,8 @@ struct TransferParams {
 	uint256 validAfter;
 	uint256 validBefore;
 }
+
+struct SolverParams {
+	bytes32 recipient;
+	bytes32 driver;
+}

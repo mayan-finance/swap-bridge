@@ -57,7 +57,7 @@ contract SwiftDest is ReentrancyGuard {
 		bytes memory encodedVm,
 		OrderParams memory params,
 		ExtraParams memory extraParams,
-		bytes32 recipient,
+		SolverParams memory solverParams,
 		bool batch,
 		PermitParams calldata permit
 	) nonReentrant public payable returns (uint64 sequence) {
@@ -111,7 +111,7 @@ contract SwiftDest is ReentrancyGuard {
 			batch: batch
 		}));
 
-		sequence = batchOrSendUnlockMsg(buildUnlockMsg(fulfillMsg.orderHash, params, extraParams, recipient), batch);
+		sequence = batchOrSendUnlockMsg(buildUnlockMsg(fulfillMsg.orderHash, params, extraParams, solverParams), batch);
 		emit OrderFulfilled(fulfillMsg.orderHash, sequence, fulfillAmount);
 	}
 
@@ -120,7 +120,7 @@ contract SwiftDest is ReentrancyGuard {
 		bytes32 orderHash,
 		OrderParams memory params,
 		ExtraParams memory extraParams,
-		bytes32 recipient,
+		SolverParams memory solverParams,
 		bool batch,
 		PermitParams calldata permit
 	) public nonReentrant payable returns (uint64 sequence) {
@@ -162,7 +162,7 @@ contract SwiftDest is ReentrancyGuard {
 			batch: batch
 		}));
 
-		sequence = batchOrSendUnlockMsg(buildUnlockMsg(orderHash, params, extraParams, recipient), batch);
+		sequence = batchOrSendUnlockMsg(buildUnlockMsg(orderHash, params, extraParams, solverParams), batch);
 		emit OrderFulfilled(orderHash, sequence, fulfillAmount);
 	}
 
@@ -315,7 +315,7 @@ contract SwiftDest is ReentrancyGuard {
 		bytes32 orderHash,
 		OrderParams memory params,
 		ExtraParams memory extraParams,
-		bytes32 recipient
+		SolverParams memory solverParams
 	) internal view returns (UnlockMsg memory) {
 		return UnlockMsg({
 			action: uint8(Action.UNLOCK),
@@ -325,8 +325,8 @@ contract SwiftDest is ReentrancyGuard {
 			referrerAddr: params.referrerAddr,
 			referrerBps: params.referrerBps,
 			protocolBps: extraParams.protocolBps,
-			unlockReceiver: recipient,
-			driver: bytes32(uint256(uint160(tx.origin))),
+			unlockReceiver: solverParams.recipient,
+			driver: solverParams.driver,
 			fulfillTime: uint64(block.timestamp)
 		});
 	}
