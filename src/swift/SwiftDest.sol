@@ -124,7 +124,7 @@ contract SwiftDest is ReentrancyGuard {
 		bool batch,
 		PermitParams calldata permit
 	) public nonReentrant payable returns (uint64 sequence) {
-		if (params.auctionMode != uint8(AuctionMode.BYPASS)) {
+		if (params.auctionMode != uint8(AuctionMode.LIMIT_ORDER)) {
 			revert InvalidAuctionMode();
 		}
 

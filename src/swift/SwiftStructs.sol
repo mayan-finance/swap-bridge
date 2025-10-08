@@ -78,17 +78,19 @@ enum Status {
 }
 
 enum Action {
-	NONE,
+	INVALID,
 	FULFILL,
 	UNLOCK,
 	REFUND,
 	BATCH_UNLOCK,
-	COMPRESSED_UNLOCK
+	COMPRESSED_UNLOCK,
+	SET_REFUND_VERIFIER,
+	RESCUE
 }
 
 enum AuctionMode {
-	NONE,
-	BYPASS,
+	INVALID,
+	LIMIT_ORDER,
 	ENGLISH
 }
 
@@ -137,8 +139,16 @@ struct SolverParams {
 }
 
 struct RescueMsg {
-	uint8 orderStatus;
+	uint8 action;
 	bytes32 orderHash;
+	uint8 orderStatus;
 	address token;
 	uint64 amount;
+}
+
+struct RefundVerifier {
+	uint8 action;
+	address verifier;
+	uint16 emitterChainId;
+	bytes32 emitterAddr;
 }

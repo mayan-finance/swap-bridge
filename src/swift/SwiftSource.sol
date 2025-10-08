@@ -27,6 +27,9 @@ contract SwiftSource is ReentrancyGuard {
 	uint8 constant NATIVE_DECIMALS = 18;
 
 	IWormhole public immutable wormhole;
+	IWormhole public refundVerifier;
+	uint16 public refundEmitterChainId;
+	bytes32 public refundEmitterAddr;
 	IFeeManager public feeManager;
 	address public immutable rescueVault;
 	address public guardian;
@@ -38,9 +41,19 @@ contract SwiftSource is ReentrancyGuard {
 	mapping(bytes32 => Order) public orders;
 	mapping(uint16 => bytes32) public emitters;
 
-	constructor(address _wormhole, address _feeManager, address _rescueVault) {
+	constructor(
+		address _wormhole,
+		address _refundVerifier,
+		uint16 _refundEmitterChainId,
+		bytes32 _refundEmitterAddr,
+		address _feeManager,
+		address _rescueVault
+	) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
+		refundVerifier = IWormhole(_refundVerifier);
+		refundEmitterChainId = _refundEmitterChainId;
+		refundEmitterAddr = _refundEmitterAddr;
 		feeManager = IFeeManager(_feeManager);
 		rescueVault = _rescueVault;
 
@@ -284,8 +297,16 @@ contract SwiftSource is ReentrancyGuard {
 		emit OrderUnlocked(unlockMsg.orderHash);
 	}
 
-	function refundOrder(bytes memory encodedVm) nonReentrant() public {
-		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
+	function refundOrder(bytes memory encodedVm, bool fast) nonReentrant() public {
+		IWormhole.VM memory vm;
+		bool valid;
+		string memory reason;
+
+		if (fast && address(refundVerifier) != address(0)) {
+			(vm, valid,reason) = refundVerifier.parseAndVerifyVM(encodedVm);
+		} else {
+			(vm, valid,reason) = wormhole.parseAndVerifyVM(encodedVm);
+		}
 
 		require(valid, reason);
 
@@ -303,11 +324,20 @@ contract SwiftSource is ReentrancyGuard {
 		}
 		orders[refundMsg.orderHash].status = Status.REFUNDED;
 
-		if (vm.emitterChainId != order.destChainId) {
-			revert InvalidEmitterChain();
-		}
-		if (vm.emitterAddress != emitters[order.destChainId]) {
-			revert InvalidEmitterAddress();
+		if (!fast) {
+			if (vm.emitterChainId != refundEmitterChainId) {
+				revert InvalidEmitterChain();
+			}
+			if (vm.emitterAddress != refundEmitterAddr) {
+				revert InvalidEmitterAddress();
+			}
+		} else {
+			if (vm.emitterChainId != order.destChainId) {
+				revert InvalidEmitterChain();
+			}
+			if (vm.emitterAddress != emitters[order.destChainId]) {
+				revert InvalidEmitterAddress();
+			}
 		}
 
 		address trader = truncateAddress(refundMsg.trader);
@@ -397,6 +427,51 @@ contract SwiftSource is ReentrancyGuard {
 		}
 
 		processUnlocks(encodedPayload, count, vm.emitterChainId, vm.emitterAddress, indexes);
+	}
+
+	function rescue(bytes memory encodedVm) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		(IWormhole.VM memory vm, bool valid, string memory reason) = IWormhole(wormhole).parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+		if (vm.emitterChainId != 1) {
+			revert InvalidEmitterChain();
+		}
+		if (vm.emitterAddress != emitters[1]) {
+			revert InvalidEmitterAddress();
+		}
+
+		RescueMsg memory rescueMsg = parseRescuePayload(vm.payload);
+		orders[rescueMsg.orderHash].status = Status(rescueMsg.orderStatus);
+		if (rescueMsg.amount > 0) {
+			if (rescueMsg.token == address(0)) {
+				payEth(rescueVault, rescueMsg.amount, true);
+			} else {
+				IERC20(rescueMsg.token).safeTransfer(rescueVault, rescueMsg.amount);
+			}
+		}
+	}
+
+	function setRefundVerifier(bytes memory encodedVm) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		(IWormhole.VM memory vm, bool valid, string memory reason) = refundVerifier.parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+		if (vm.emitterChainId != refundEmitterChainId) {
+			revert InvalidEmitterChain();
+		}
+		if (vm.emitterAddress != refundEmitterAddr) {
+			revert InvalidEmitterAddress();
+		}
+
+		RefundVerifier memory payload = parseRefundVerifierPayload(vm.payload);
+		refundVerifier = IWormhole(payload.verifier);
+		refundEmitterChainId = payload.emitterChainId;
+		refundEmitterAddr = payload.emitterAddr;
 	}
 
 	function processUnlocks(bytes memory payload, uint16 count, uint16 emitterChainId, bytes32 emitterAddress, uint16[] memory indexes) internal {
@@ -557,6 +632,47 @@ contract SwiftSource is ReentrancyGuard {
 		index += 8;
 	}
 
+	function parseRescuePayload(bytes memory encoded) public pure returns (RescueMsg memory rescueMsg) {
+		uint index = 0;
+
+		rescueMsg.action = encoded.toUint8(index);
+		index += 1;
+		if (rescueMsg.action != uint8(Action.RESCUE)) {
+			revert InvalidAction();
+		}
+
+		rescueMsg.orderHash = encoded.toBytes32(index);
+		index += 32;
+
+		rescueMsg.orderStatus = encoded.toUint8(index);
+		index += 1;
+
+		rescueMsg.token = address(uint160(encoded.toUint256(index)));
+		index += 32;
+
+		rescueMsg.amount = encoded.toUint64(index);
+		index += 8;
+	}
+
+	function parseRefundVerifierPayload(bytes memory encoded) public pure returns (RefundVerifier memory verifier) {
+		uint index = 0;
+
+		verifier.action = encoded.toUint8(index);
+		index += 1;
+		if (verifier.action != uint8(Action.SET_REFUND_VERIFIER)) {
+			revert InvalidAction();
+		}
+
+		verifier.verifier = address(uint160(encoded.toUint256(index)));
+		index += 32;
+
+		verifier.emitterChainId = encoded.toUint16(index);
+		index += 2;
+
+		verifier.emitterAddr = encoded.toBytes32(index);
+		index += 32;
+	}
+
 	function encodeKey(Key memory key) internal pure returns (bytes memory encoded) {
 		encoded = abi.encodePacked(
 			key.payloadType,
@@ -659,47 +775,6 @@ contract SwiftSource is ReentrancyGuard {
 			permitParams.r,
 			permitParams.s
 		);
-	}
-
-	function rescue(bytes memory encodedVm) public {
-		if (msg.sender != guardian) {
-			revert Unauthorized();
-		}
-		(IWormhole.VM memory vm, bool valid, string memory reason) = IWormhole(wormhole).parseAndVerifyVM(encodedVm);
-
-		require(valid, reason);
-		if (vm.emitterChainId != 1) {
-			revert InvalidEmitterChain();
-		}
-		if (vm.emitterAddress != emitters[1]) {
-			revert InvalidEmitterAddress();
-		}
-
-		RescueMsg memory rescueMsg = parseRescuePayload(vm.payload);
-		orders[rescueMsg.orderHash].status = Status(rescueMsg.orderStatus);
-		if (rescueMsg.amount > 0) {
-			if (rescueMsg.token == address(0)) {
-				payEth(rescueVault, rescueMsg.amount, true);
-			} else {
-				IERC20(rescueMsg.token).safeTransfer(rescueVault, rescueMsg.amount);
-			}
-		}
-	}
-
-	function parseRescuePayload(bytes memory encoded) public pure returns (RescueMsg memory rescueMsg) {
-		uint index = 0;
-
-		rescueMsg.orderStatus = encoded.toUint8(index);
-		index += 1;
-
-		rescueMsg.orderHash = encoded.toBytes32(index);
-		index += 32;
-
-		rescueMsg.token = address(uint160(encoded.toUint256(index)));
-		index += 32;
-
-		rescueMsg.amount = encoded.toUint64(index);
-		index += 8;
 	}
 
 	function setPause(bool _pause) public {
