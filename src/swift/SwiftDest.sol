@@ -256,6 +256,33 @@ contract SwiftDest is ReentrancyGuard {
 		}
 	}
 
+	function rescue(bytes memory encodedVm) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		(IWormhole.VM memory vm, bool valid, string memory reason) = IWormhole(wormhole).parseAndVerifyVM(encodedVm);
+
+		require(valid, reason);
+		if (vm.emitterChainId != 1) {
+			revert InvalidEmitterChain();
+		}
+		if (vm.emitterAddress != emitters[1]) {
+			revert InvalidEmitterAddress();
+		}
+
+		RescueMsg memory rescueMsg = parseRescuePayload(vm.payload);
+		if (rescueMsg.orderHash != bytes32(0)) {
+			orders[rescueMsg.orderHash].status = Status(rescueMsg.orderStatus);
+		}
+		if (rescueMsg.amount > 0) {
+			if (rescueMsg.token == address(0)) {
+				payEth(rescueVault, rescueMsg.amount, true);
+			} else {
+				IERC20(rescueMsg.token).safeTransfer(rescueVault, rescueMsg.amount);
+			}
+		}
+	}
+
 	function makePayments(
 		uint256 fulfillAmount,
 		PaymentParams memory params
@@ -390,6 +417,28 @@ contract SwiftDest is ReentrancyGuard {
 
 		fulfillMsg.penaltyPeriod = encoded.toUint16(index);
 		index += 2;
+	}
+
+	function parseRescuePayload(bytes memory encoded) public pure returns (RescueMsg memory rescueMsg) {
+		uint index = 0;
+
+		rescueMsg.action = encoded.toUint8(index);
+		index += 1;
+		if (rescueMsg.action != uint8(Action.RESCUE)) {
+			revert InvalidAction();
+		}
+
+		rescueMsg.orderHash = encoded.toBytes32(index);
+		index += 32;
+
+		rescueMsg.orderStatus = encoded.toUint8(index);
+		index += 1;
+
+		rescueMsg.token = address(uint160(encoded.toUint256(index)));
+		index += 32;
+
+		rescueMsg.amount = encoded.toUint64(index);
+		index += 8;
 	}
 
 	function encodeKey(Key memory key) internal pure returns (bytes memory encoded) {

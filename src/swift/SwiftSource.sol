@@ -274,20 +274,28 @@ contract SwiftSource is ReentrancyGuard {
 
 		if (tokenIn == address(0)) {
 			if (normalizedReferrerFee > 0 && referrerAddress != address(0)) {
-				payEth(referrerAddress, deNormalizeAmount(normalizedReferrerFee, decimals), false);
+				uint256 referrerFee = deNormalizeAmount(normalizedReferrerFee, decimals);
+				try feeManager.depositFee {value: referrerFee} (referrerAddress, address(0), referrerFee) {} catch {}
 			}
 			if (normalizedProtocolFee > 0 && feeCollector != address(0)) {
-				payEth(feeCollector, deNormalizeAmount(normalizedProtocolFee, decimals), false);
+				uint256 protocolFee = deNormalizeAmount(normalizedProtocolFee, decimals);
+				try feeManager.depositFee {value: protocolFee} (feeCollector, address(0), protocolFee) {} catch {}
 			}
 			if (netAmount > 0) {
 				payEth(receiver, deNormalizeAmount(netAmount, decimals), true);
 			}
 		} else {
+			uint256 totalFee = 0;
 			if (normalizedReferrerFee > 0 && referrerAddress != address(0)) {
-				try IERC20(tokenIn).transfer(referrerAddress, deNormalizeAmount(normalizedReferrerFee, decimals)) {} catch {}
+				uint256 referrerFee = deNormalizeAmount(normalizedReferrerFee, decimals);
+				try feeManager.depositFee(referrerAddress, tokenIn, referrerFee) {totalFee += referrerFee;} catch {}
 			}
 			if (normalizedProtocolFee > 0 && feeCollector != address(0)) {
-				try IERC20(tokenIn).transfer(feeCollector, deNormalizeAmount(normalizedProtocolFee, decimals)) {} catch {}
+				uint256 protocolFee = deNormalizeAmount(normalizedProtocolFee, decimals);
+				try feeManager.depositFee(feeCollector, tokenIn, protocolFee) {totalFee += protocolFee;} catch {}
+			}
+			if (totalFee > 0) {
+				try IERC20(tokenIn).transfer(address(feeManager), totalFee) {} catch {}
 			}
 			if (netAmount > 0) {
 				IERC20(tokenIn).safeTransfer(receiver, deNormalizeAmount(netAmount, decimals));
@@ -324,7 +332,7 @@ contract SwiftSource is ReentrancyGuard {
 		}
 		orders[refundMsg.orderHash].status = Status.REFUNDED;
 
-		if (!fast) {
+		if (fast) {
 			if (vm.emitterChainId != refundEmitterChainId) {
 				revert InvalidEmitterChain();
 			}
@@ -358,12 +366,14 @@ contract SwiftSource is ReentrancyGuard {
 
 		uint256 netAmount = amountIn - cancelFee - refundFee;
 		if (tokenIn == address(0)) {
-			payEth(canceler, cancelFee, false);
-			depositFee(msg.sender, address(0), refundFee);
+			try feeManager.depositFee {value: cancelFee} (canceler, address(0), cancelFee) {} catch {}
+			try feeManager.depositFee {value: refundFee} (msg.sender, address(0), refundFee) {} catch {}
 			payEth(trader, netAmount, true);
 		} else {
-			IERC20(tokenIn).transfer(canceler, cancelFee);
-			depositFee(msg.sender, tokenIn, refundFee);
+			uint256 totalFee = cancelFee + refundFee;
+			try feeManager.depositFee(canceler, tokenIn, cancelFee) {} catch {}
+			try feeManager.depositFee(msg.sender, tokenIn, refundFee) {} catch {}
+			try IERC20(tokenIn).transfer(address(feeManager), totalFee) {} catch {}
 			IERC20(tokenIn).safeTransfer(trader, netAmount);
 		}
 
@@ -444,7 +454,9 @@ contract SwiftSource is ReentrancyGuard {
 		}
 
 		RescueMsg memory rescueMsg = parseRescuePayload(vm.payload);
-		orders[rescueMsg.orderHash].status = Status(rescueMsg.orderStatus);
+		if (rescueMsg.orderHash != bytes32(0)) {
+			orders[rescueMsg.orderHash].status = Status(rescueMsg.orderStatus);
+		}
 		if (rescueMsg.amount > 0) {
 			if (rescueMsg.token == address(0)) {
 				payEth(rescueVault, rescueMsg.amount, true);
@@ -702,15 +714,6 @@ contract SwiftSource is ReentrancyGuard {
 		(bool success, ) = payable(to).call{value: amount}('');
 		if (revertOnFailure) {
 			require(success, 'payment failed');
-		}
-	}
-
-	function depositFee(address owner, address token, uint256 amount) internal {
-		if (token == address(0)) {
-			try feeManager.depositFee {value: amount} (owner, token, amount) {} catch {}
-		} else {
-			try IERC20(token).transfer(address(feeManager), amount) {} catch {}
-			try feeManager.depositFee(owner, token, amount) {} catch {}
 		}
 	}
 
