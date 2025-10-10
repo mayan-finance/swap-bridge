@@ -133,9 +133,10 @@ struct TransferParams {
 	uint256 validBefore;
 }
 
-struct SolverParams {
+struct UnlockParams {
 	bytes32 recipient;
 	bytes32 driver;
+	bool batch;
 }
 
 struct RescueMsg {
