@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "./libs/BytesLib.sol";
 
 
-contract MayanForwarder {
+contract MayanForwarder2 {
 
 	using SafeERC20 for IERC20;
 	using BytesLib for bytes;
@@ -153,7 +153,7 @@ contract MayanForwarder {
 			maxApproveIfNeeded(middleToken, mayanProtocol, middleAmount);
 		}
 
-		(success, ) = mayanProtocol.call{value: val}(replaceMiddleAmount(mayanData, middleAmount));
+		(success, ) = mayanProtocol.call{value: val}(middleToken == address(0) ? mayanData : replaceMiddleAmount(mayanData, middleAmount));
 		require(success, "mayan protocol call failed");
 
 		transferBackRemaining(tokenIn, amountBefore);
