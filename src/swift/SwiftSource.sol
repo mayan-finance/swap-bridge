@@ -82,7 +82,7 @@ contract SwiftSource is ReentrancyGuard {
 			revert InvalidGasDrop();
 		}
 
-		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, address(0), params.tokenOut, params.destChainId, params.referrerBps);
+		uint8 protocolBps = feeManager.calcSwiftProtocolBps(address(0), msg.value, params);
 		if (params.referrerBps > BPS_FEE_LIMIT || protocolBps > BPS_FEE_LIMIT) {
 			revert InvalidBpsFee();
 		}
@@ -140,7 +140,7 @@ contract SwiftSource is ReentrancyGuard {
 			revert InvalidGasDrop();
 		}
 
-		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
+		uint8 protocolBps = feeManager.calcSwiftProtocolBps(tokenIn, amountIn, params);
 		if (params.referrerBps > BPS_FEE_LIMIT || protocolBps > BPS_FEE_LIMIT) {
 			revert InvalidBpsFee();
 		}
@@ -211,7 +211,7 @@ contract SwiftSource is ReentrancyGuard {
 			revert InvalidGasDrop();
 		}
 
-		uint8 protocolBps = feeManager.calcProtocolBps(normlizedAmountIn, tokenIn, params.tokenOut, params.destChainId, params.referrerBps);
+		uint8 protocolBps = feeManager.calcSwiftProtocolBps(tokenIn, amountIn, params);
 		if (params.referrerBps > BPS_FEE_LIMIT || protocolBps > BPS_FEE_LIMIT) {
 			revert InvalidBpsFee();
 		}

@@ -35,6 +35,15 @@ contract FeeManager is IFeeManager {
 		return baseBps;
 	}
 
+	 function calcSwiftProtocolBps(
+		address tokenIn,
+		uint256 amountIn,
+		OrderParams memory params
+	)  external override returns (uint8) {
+		emit ProtocolFeeCalced(baseBps);
+		return baseBps;
+	}
+
 	function calcFastMCTPProtocolBps(
         uint8 payloadType,
         address localToken,
