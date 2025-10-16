@@ -53,6 +53,7 @@ contract SwiftDest is ReentrancyGuard {
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
 		consistencyLevel = _consistencyLevel;
+		rescueVault = _rescueVault;
 	}
 
 	function fulfillOrder(
