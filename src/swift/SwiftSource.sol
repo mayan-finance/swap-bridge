@@ -366,14 +366,24 @@ contract SwiftSource is ReentrancyGuard {
 
 		uint256 netAmount = amountIn - cancelFee - refundFee;
 		if (tokenIn == address(0)) {
-			try feeManager.depositFee {value: cancelFee} (canceler, address(0), cancelFee) {} catch {}
-			try feeManager.depositFee {value: refundFee} (msg.sender, address(0), refundFee) {} catch {}
+			if (cancelFee > 0) {
+				try feeManager.depositFee {value: cancelFee} (canceler, address(0), cancelFee) {} catch {}
+			}
+			if (refundFee > 0) {
+				try feeManager.depositFee {value: refundFee} (msg.sender, address(0), refundFee) {} catch {}
+			}
 			payEth(trader, netAmount, true);
 		} else {
+			if (cancelFee > 0) {
+				try feeManager.depositFee(canceler, tokenIn, cancelFee) {} catch {}
+			}
+			if (refundFee > 0) {
+				try feeManager.depositFee(msg.sender, tokenIn, refundFee) {} catch {}
+			}
 			uint256 totalFee = cancelFee + refundFee;
-			try feeManager.depositFee(canceler, tokenIn, cancelFee) {} catch {}
-			try feeManager.depositFee(msg.sender, tokenIn, refundFee) {} catch {}
-			try IERC20(tokenIn).transfer(address(feeManager), totalFee) {} catch {}
+			if (totalFee > 0) {
+				try IERC20(tokenIn).transfer(address(feeManager), totalFee) {} catch {}
+			}
 			IERC20(tokenIn).safeTransfer(trader, netAmount);
 		}
 
