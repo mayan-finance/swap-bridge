@@ -10,18 +10,14 @@ contract FeeManager is IFeeManager {
 	using SafeERC20 for IERC20;
 
 	address public immutable protocol;
-	address public operator;
-	address public nextOperator;
-	address public collector;
+	address public immutable collector;
 	uint8 public baseBps;
 
 	mapping (bytes32 => uint256) public relayerFees;
 
-	constructor(address _protocol, address _operator, address _collector, uint8 _baseBps) {
+	constructor(address _protocol, address _collector) {
 		protocol = _protocol;
-		operator = _operator;
 		collector = _collector;
-		baseBps = _baseBps;
 	}
 	
 	function calcProtocolBps(
@@ -31,8 +27,8 @@ contract FeeManager is IFeeManager {
 		uint16 destChain,
 		uint8 referrerBps
 	) external override returns (uint8) {
-		emit ProtocolFeeCalced(baseBps);
-		return baseBps;
+		emit ProtocolFeeCalced(3);
+		return 3;
 	}
 
 	 function calcSwiftProtocolBps(
@@ -41,7 +37,7 @@ contract FeeManager is IFeeManager {
 		OrderParams memory params
 	)  external override returns (uint8) {
 		emit ProtocolFeeCalced(baseBps);
-		return baseBps;
+		return 3;
 	}
 
 	function calcFastMCTPProtocolBps(
@@ -52,6 +48,7 @@ contract FeeManager is IFeeManager {
         address referrerAddr,
         uint8 referrerBps
     ) external returns (uint8) {
+		emit ProtocolFeeCalced(baseBps);
 		return 3;
 	}
 
@@ -81,29 +78,9 @@ contract FeeManager is IFeeManager {
 		return collector;
 	}
 
-	function setFeeCollector(address _collector) external {
-		require(msg.sender == operator, 'only operator');
-		collector = _collector;
-	}
-
 	function getRelayerFee(address relayer, address token) external view returns (uint256) {
 		bytes32 key = keccak256(abi.encodePacked(relayer, token));
 		return relayerFees[key];
-	}
-
-	function changeOperator(address _nextOperator) external {
-		require(msg.sender == operator, 'only operator');
-		nextOperator = _nextOperator;
-	}	
-
-	function claimOperator() external {
-		require(msg.sender == nextOperator, 'only next operator');
-		operator = nextOperator;
-	}
-
-	function setBaseBps(uint8 _baseBps) external {
-		require(msg.sender == operator, 'only operator');
-		baseBps = _baseBps;
 	}
 
 	receive() external payable {}
