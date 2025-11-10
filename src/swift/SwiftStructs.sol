@@ -141,6 +141,7 @@ struct UnlockParams {
 
 struct RescueMsg {
 	uint8 action;
+	uint16 chainId;
 	bytes32 orderHash;
 	uint8 orderStatus;
 	address token;

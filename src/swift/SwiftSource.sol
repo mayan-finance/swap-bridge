@@ -464,6 +464,9 @@ contract SwiftSource is ReentrancyGuard {
 		}
 
 		RescueMsg memory rescueMsg = parseRescuePayload(vm.payload);
+		if (rescueMsg.chainId != wormhole.chainId()) {
+			revert InvalidSrcChain();
+		}
 		if (rescueMsg.orderHash != bytes32(0)) {
 			orders[rescueMsg.orderHash].status = Status(rescueMsg.orderStatus);
 		}
@@ -662,6 +665,9 @@ contract SwiftSource is ReentrancyGuard {
 		if (rescueMsg.action != uint8(Action.RESCUE)) {
 			revert InvalidAction();
 		}
+
+		rescueMsg.chainId = encoded.toUint16(index);
+		index += 2;
 
 		rescueMsg.orderHash = encoded.toBytes32(index);
 		index += 32;
