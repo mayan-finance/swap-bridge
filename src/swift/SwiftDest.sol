@@ -274,6 +274,9 @@ contract SwiftDest is ReentrancyGuard {
 		}
 
 		RescueMsg memory rescueMsg = parseRescuePayload(vm.payload);
+		if (rescueMsg.chainId != wormhole.chainId()) {
+			revert InvalidSrcChain();
+		}
 		if (rescueMsg.orderHash != bytes32(0)) {
 			orders[rescueMsg.orderHash].status = Status(rescueMsg.orderStatus);
 		}
