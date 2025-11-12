@@ -24,3 +24,4 @@ error InvalidPayloadLength();
 error EmitterAddressExists();
 error InvalidBatchIndex();
 error InvalidAuctionConfig();
+error SequenceAlreadyUsed();

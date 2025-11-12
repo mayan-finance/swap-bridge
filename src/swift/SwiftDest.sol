@@ -38,6 +38,7 @@ contract SwiftDest is ReentrancyGuard {
 	mapping(bytes32 => bytes) public unlockMsgs;
 	mapping(bytes32 => uint256) public pendingAmounts;
 	mapping(uint16 => bytes32) public emitters;
+	mapping(uint64 => bool) public usedSequences;
 
 	constructor(
 		address _wormhole,
@@ -264,8 +265,13 @@ contract SwiftDest is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		(IWormhole.VM memory vm, bool valid, string memory reason) = IWormhole(wormhole).parseAndVerifyVM(encodedVm);
-
 		require(valid, reason);
+
+		if (usedSequences[vm.sequence]) {
+			revert SequenceAlreadyUsed();
+		}
+		usedSequences[vm.sequence] = true;
+
 		if (vm.emitterChainId != 1) {
 			revert InvalidEmitterChain();
 		}

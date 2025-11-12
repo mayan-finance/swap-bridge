@@ -40,6 +40,7 @@ contract SwiftSource is ReentrancyGuard {
 
 	mapping(bytes32 => Order) public orders;
 	mapping(uint16 => bytes32) public emitters;
+	mapping(uint64 => bool) public usedSequences;
 
 	constructor(
 		address _wormhole,
@@ -454,8 +455,13 @@ contract SwiftSource is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		(IWormhole.VM memory vm, bool valid, string memory reason) = IWormhole(wormhole).parseAndVerifyVM(encodedVm);
-
 		require(valid, reason);
+
+		if (usedSequences[vm.sequence]) {
+			revert SequenceAlreadyUsed();
+		}
+		usedSequences[vm.sequence] = true;
+
 		if (vm.emitterChainId != 1) {
 			revert InvalidEmitterChain();
 		}
@@ -484,8 +490,13 @@ contract SwiftSource is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		(IWormhole.VM memory vm, bool valid, string memory reason) = refundVerifier.parseAndVerifyVM(encodedVm);
-
 		require(valid, reason);
+
+		if (usedSequences[vm.sequence]) {
+			revert SequenceAlreadyUsed();
+		}
+		usedSequences[vm.sequence] = true;
+
 		if (vm.emitterChainId != refundEmitterChainId) {
 			revert InvalidEmitterChain();
 		}
