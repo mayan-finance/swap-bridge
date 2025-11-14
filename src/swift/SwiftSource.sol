@@ -411,20 +411,6 @@ contract SwiftSource is ReentrancyGuard {
 
 		unlockOrder(unlockMsg, order);
 	}
-
-	function unlockBatch(bytes memory encodedVm, uint16[] memory indexes) nonReentrant public {
-		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
-
-		require(valid, reason);
-
-		uint8 action = vm.payload.toUint8(0);
-		if (action != uint8(Action.BATCH_UNLOCK)) {
-			revert InvalidAction();
-		}
-		uint16 count = vm.payload.toUint16(1);
-
-		processUnlocks(vm.payload, count, vm.emitterChainId, vm.emitterAddress, indexes);
-	}
 	
 	function unlockCompressedBatch(bytes memory encodedVm, bytes memory encodedPayload, uint16[] memory indexes) nonReentrant public {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = wormhole.parseAndVerifyVM(encodedVm);
