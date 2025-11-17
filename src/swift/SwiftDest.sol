@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -29,6 +29,7 @@ contract SwiftDest is ReentrancyGuard {
 	uint16 public auctionChainId;
 	bytes32 public auctionAddr;
 	uint8 public consistencyLevel;
+	address public immutable rescueVault;
 	address public guardian;
 	address public nextGuardian;
 	bool public paused;
@@ -36,13 +37,16 @@ contract SwiftDest is ReentrancyGuard {
 	mapping(bytes32 => Order) public orders;
 	mapping(bytes32 => bytes) public unlockMsgs;
 	mapping(bytes32 => uint256) public pendingAmounts;
+	mapping(uint16 => bytes32) public emitters;
+	mapping(uint64 => bool) public usedSequences;
 
 	constructor(
 		address _wormhole,
 		address _auctionVerifier,
 		uint16 _auctionChainId,
 		bytes32 _auctionAddr,
-		uint8 _consistencyLevel
+		uint8 _consistencyLevel,
+		address _rescueVault
 	) {
 		guardian = msg.sender;
 		wormhole = IWormhole(_wormhole);
@@ -50,6 +54,7 @@ contract SwiftDest is ReentrancyGuard {
 		auctionChainId = _auctionChainId;
 		auctionAddr = _auctionAddr;
 		consistencyLevel = _consistencyLevel;
+		rescueVault = _rescueVault;
 	}
 
 	function fulfillOrder(
@@ -57,10 +62,9 @@ contract SwiftDest is ReentrancyGuard {
 		bytes memory encodedVm,
 		OrderParams memory params,
 		ExtraParams memory extraParams,
-		SolverParams memory solverParams,
-		bool batch,
+		UnlockParams memory unlockParams,
 		PermitParams calldata permit
-	) nonReentrant public payable returns (uint64 sequence) {
+	) nonReentrant public payable returns (bytes memory) {
 		(IWormhole.VM memory vm, bool valid, string memory reason) = IWormhole(auctionVerifier).parseAndVerifyVM(encodedVm);
 
 		require(valid, reason);
@@ -108,11 +112,12 @@ contract SwiftDest is ReentrancyGuard {
 			destAddr: truncateAddress(params.destAddr),
 			tokenOut: tokenOut,
 			gasDrop: params.gasDrop,
-			batch: batch
+			batch: unlockParams.batch
 		}));
 
-		sequence = batchOrSendUnlockMsg(buildUnlockMsg(fulfillMsg.orderHash, params, extraParams, solverParams), batch);
+		uint64 sequence = batchOrSendUnlockMsg(buildUnlockMsg(fulfillMsg.orderHash, params, extraParams, unlockParams), unlockParams.batch);
 		emit OrderFulfilled(fulfillMsg.orderHash, sequence, fulfillAmount);
+		return vm.payload;
 	}
 
 	function fulfillSimple(
@@ -120,11 +125,10 @@ contract SwiftDest is ReentrancyGuard {
 		bytes32 orderHash,
 		OrderParams memory params,
 		ExtraParams memory extraParams,
-		SolverParams memory solverParams,
-		bool batch,
+		UnlockParams memory unlockParams,
 		PermitParams calldata permit
-	) public nonReentrant payable returns (uint64 sequence) {
-		if (params.auctionMode != uint8(AuctionMode.BYPASS)) {
+	) public nonReentrant payable {
+		if (params.auctionMode != uint8(AuctionMode.LIMIT_ORDER)) {
 			revert InvalidAuctionMode();
 		}
 
@@ -159,10 +163,10 @@ contract SwiftDest is ReentrancyGuard {
 			destAddr: truncateAddress(params.destAddr),
 			tokenOut: tokenOut,
 			gasDrop: params.gasDrop,
-			batch: batch
+			batch: unlockParams.batch
 		}));
 
-		sequence = batchOrSendUnlockMsg(buildUnlockMsg(orderHash, params, extraParams, solverParams), batch);
+		uint64 sequence = batchOrSendUnlockMsg(buildUnlockMsg(orderHash, params, extraParams, unlockParams), unlockParams.batch);
 		emit OrderFulfilled(orderHash, sequence, fulfillAmount);
 	}
 
@@ -250,9 +254,44 @@ contract SwiftDest is ReentrancyGuard {
 		netAmount = pendingAmounts[orderHash];
 		address tokenOut = truncateAddress(params.tokenOut);
 		if (tokenOut == address(0)) {
-			payEth(msg.sender, netAmount);
+			payEth(msg.sender, netAmount, true);
 		} else {
 			IERC20(tokenOut).safeTransfer(msg.sender, netAmount);
+		}
+	}
+
+	function rescue(bytes memory encodedVm) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		(IWormhole.VM memory vm, bool valid, string memory reason) = IWormhole(wormhole).parseAndVerifyVM(encodedVm);
+		require(valid, reason);
+
+		if (usedSequences[vm.sequence]) {
+			revert SequenceAlreadyUsed();
+		}
+		usedSequences[vm.sequence] = true;
+
+		if (vm.emitterChainId != 1) {
+			revert InvalidEmitterChain();
+		}
+		if (vm.emitterAddress != emitters[1]) {
+			revert InvalidEmitterAddress();
+		}
+
+		RescueMsg memory rescueMsg = parseRescuePayload(vm.payload);
+		if (rescueMsg.chainId != wormhole.chainId()) {
+			revert InvalidSrcChain();
+		}
+		if (rescueMsg.orderHash != bytes32(0)) {
+			orders[rescueMsg.orderHash].status = Status(rescueMsg.orderStatus);
+		}
+		if (rescueMsg.amount > 0) {
+			if (rescueMsg.token == address(0)) {
+				payEth(rescueVault, rescueMsg.amount, true);
+			} else {
+				IERC20(rescueMsg.token).safeTransfer(rescueVault, rescueMsg.amount);
+			}
 		}
 	}
 
@@ -285,7 +324,7 @@ contract SwiftDest is ReentrancyGuard {
 			if (params.payloadType == 2) {
 				pendingAmounts[params.orderHash] = fulfillAmount;
 			} else {
-				payEth(params.destAddr, fulfillAmount);
+				payEth(params.destAddr, fulfillAmount, true);
 			}
 		} else {
 			if (params.gasDrop > 0) {
@@ -296,7 +335,7 @@ contract SwiftDest is ReentrancyGuard {
 				) {
 					revert InvalidGasDrop();
 				}
-				payEth(params.destAddr, gasDrop);
+				payEth(params.destAddr, gasDrop, false);
 			} else if (
 				(params.batch && msg.value != 0) ||
 				(!params.batch && msg.value != wormhole.messageFee())
@@ -315,7 +354,7 @@ contract SwiftDest is ReentrancyGuard {
 		bytes32 orderHash,
 		OrderParams memory params,
 		ExtraParams memory extraParams,
-		SolverParams memory solverParams
+		UnlockParams memory unlockParams
 	) internal view returns (UnlockMsg memory) {
 		return UnlockMsg({
 			action: uint8(Action.UNLOCK),
@@ -325,8 +364,8 @@ contract SwiftDest is ReentrancyGuard {
 			referrerAddr: params.referrerAddr,
 			referrerBps: params.referrerBps,
 			protocolBps: extraParams.protocolBps,
-			unlockReceiver: solverParams.recipient,
-			driver: solverParams.driver,
+			unlockReceiver: unlockParams.recipient,
+			driver: unlockParams.driver,
 			fulfillTime: uint64(block.timestamp)
 		});
 	}
@@ -392,6 +431,28 @@ contract SwiftDest is ReentrancyGuard {
 		index += 2;
 	}
 
+	function parseRescuePayload(bytes memory encoded) public pure returns (RescueMsg memory rescueMsg) {
+		uint index = 0;
+
+		rescueMsg.action = encoded.toUint8(index);
+		index += 1;
+		if (rescueMsg.action != uint8(Action.RESCUE)) {
+			revert InvalidAction();
+		}
+
+		rescueMsg.orderHash = encoded.toBytes32(index);
+		index += 32;
+
+		rescueMsg.orderStatus = encoded.toUint8(index);
+		index += 1;
+
+		rescueMsg.token = address(uint160(encoded.toUint256(index)));
+		index += 32;
+
+		rescueMsg.amount = encoded.toUint64(index);
+		index += 8;
+	}
+
 	function encodeKey(Key memory key) internal pure returns (bytes memory encoded) {
 		encoded = abi.encodePacked(
 			key.payloadType,
@@ -445,9 +506,11 @@ contract SwiftDest is ReentrancyGuard {
 		);
 	}
 
-	function payEth(address to, uint256 amount) internal {
+	function payEth(address to, uint256 amount, bool revertOnFailure) internal {
 		(bool success, ) = payable(to).call{value: amount}('');
-		require(success, 'payment failed');
+		if (revertOnFailure) {
+			require(success, 'payment failed');
+		}
 	}
 
 	function truncateAddress(bytes32 b) internal pure returns (address) {
@@ -530,6 +593,19 @@ contract SwiftDest is ReentrancyGuard {
 			revert Unauthorized();
 		}
 		consistencyLevel = _consistencyLevel;
+	}
+
+	function setEmitters(uint16[] memory chainIds, bytes32[] memory addresses) public {
+		if (msg.sender != guardian) {
+			revert Unauthorized();
+		}
+		require(chainIds.length == addresses.length, 'invalid array length');
+		for (uint i=0; i<chainIds.length; i++) {
+			if (emitters[chainIds[i]] != bytes32(0)) {
+				revert EmitterAddressExists();
+			}
+			emitters[chainIds[i]] = addresses[i];
+		}
 	}
 
 	function changeGuardian(address newGuardian) public {
