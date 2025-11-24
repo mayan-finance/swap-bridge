@@ -42,4 +42,22 @@
         "no-empty-blocks": "off",
         "no-unused-vars": "off"
     },
+    "solidity.soliumRules": {
+        "imports-on-top": 0,
+        "variable-declarations": 0,
+        "indentation": [
+            "off",
+            4
+        ],
+        "quotes": [
+            "off",
+            "double"
+        ],
+        "private-vars-leading-underscore": [
+            "off",
+            {
+                "strict": false
+            }
+        ]
+    }
 }
